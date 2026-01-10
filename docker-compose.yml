@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  vehicle-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vehicle_3d_tracker
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./src:/app/src
+      - ./scripts:/app/scripts
+      - ./notebooks:/app/notebooks
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DISPLAY=${DISPLAY}
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+    
+  jupyter:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: vehicle_tracker_jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./src:/app/src
+      - ./notebooks:/app/notebooks
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''

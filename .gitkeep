@@ -1,0 +1,24 @@
+# Crea questi file vuoti per mantenere la struttura delle directory in Git:
+
+data/videos/input/.gitkeep
+data/videos/output/.gitkeep
+data/calibration/images/.gitkeep
+data/results/tracked_points/.gitkeep
+data/results/poses/.gitkeep
+data/results/bbox_3d/.gitkeep
+
+# Su Linux/Mac:
+touch data/videos/input/.gitkeep
+touch data/videos/output/.gitkeep
+touch data/calibration/images/.gitkeep
+touch data/results/tracked_points/.gitkeep
+touch data/results/poses/.gitkeep
+touch data/results/bbox_3d/.gitkeep
+
+# Su Windows (PowerShell):
+New-Item -ItemType File -Path data/videos/input/.gitkeep
+New-Item -ItemType File -Path data/videos/output/.gitkeep
+New-Item -ItemType File -Path data/calibration/images/.gitkeep
+New-Item -ItemType File -Path data/results/tracked_points/.gitkeep
+New-Item -ItemType File -Path data/results/poses/.gitkeep
+New-Item -ItemType File -Path data/results/bbox_3d/.gitkeep

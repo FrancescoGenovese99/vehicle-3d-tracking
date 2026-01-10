@@ -1,0 +1,68 @@
+# Parametri per il rilevamento dei fari
+
+# Range HSV per rilevamento luci
+hsv_ranges:
+  # Fari posteriori rossi (HSV split su rosso: 0-10 e 170-180)
+  red:
+    lower1: [0, 100, 100]      # [H, S, V]
+    upper1: [10, 255, 255]
+    lower2: [170, 100, 100]
+    upper2: [180, 255, 255]
+  
+  # Luci bianche (targa, freno, retromarcia)
+  white:
+    lower: [0, 0, 200]
+    upper: [180, 30, 255]
+  
+  # Fari anteriori gialli/bianchi
+  yellow_white:
+    lower: [15, 50, 150]
+    upper: [35, 255, 255]
+
+# Parametri blob detection
+blob_detection:
+  min_area: 50               # Area minima blob in pixel
+  max_area: 5000             # Area massima blob in pixel
+  min_circularity: 0.4       # Circolarità minima (0-1, cerchio perfetto = 1)
+  min_convexity: 0.7         # Convessità minima
+  min_inertia_ratio: 0.3     # Rapporto inerzia minimo
+
+# Filtri morfologici
+morphology:
+  kernel_size: [5, 5]        # Dimensione kernel per erosione/dilatazione
+  open_iterations: 1         # Iterazioni morphologyEx OPEN
+  close_iterations: 1        # Iterazioni morphologyEx CLOSE
+
+# Selezione coppia fari
+tail_lights_selection:
+  min_horizontal_distance: 50      # Distanza minima tra fari (pixel)
+  max_horizontal_distance_ratio: 0.8  # Max distanza / larghezza frame
+  max_vertical_offset: 50          # Disallineamento verticale massimo (pixel)
+  min_area_similarity: 0.5         # Rapporto area minimo tra i due fari
+  min_pair_score: 0.3              # Score minimo per coppia valida
+
+# Parametri tracking
+tracking:
+  tracker_type: "CSRT"       # Opzioni: CSRT, KCF, MOSSE
+  bbox_padding: 20           # Padding attorno al punto per bbox tracker
+  max_frames_lost: 10        # Frames max senza detection prima di re-detect
+  
+# Re-detection
+redetection:
+  confidence_threshold: 0.6  # Threshold per riattivare detection
+  enable_kalman_prediction: true  # Usa Kalman per predire posizione
+
+# Visualizzazione
+visualization:
+  draw_detections: true      # Disegna punti rilevati
+  draw_tracking: true        # Disegna tracking
+  draw_bbox_3d: true         # Disegna bounding box 3D
+  point_color: [0, 255, 0]   # Verde per punti (BGR)
+  bbox_color: [255, 0, 0]    # Blu per bbox (BGR)
+  line_thickness: 2
+
+# Debug
+debug:
+  save_masks: false          # Salva maschere HSV
+  save_detection_frames: false  # Salva frames con detection
+  verbose: true              # Output verbose

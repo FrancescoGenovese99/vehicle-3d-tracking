@@ -1,0 +1,61 @@
+# Configurazione camera e calibrazione
+
+camera:
+  # Path al file di calibrazione (.npy contiene matrice intrinseca e coefficienti distorsione)
+  calibration_file: "data/calibration/camera1.npy"
+  
+  # Parametri intrinseci (opzionale, se non usi .npy)
+  # Matrice intrinseca K = [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
+  intrinsics:
+    fx: 800.0              # Lunghezza focale X (pixel)
+    fy: 800.0              # Lunghezza focale Y (pixel)
+    cx: 640.0              # Centro ottico X (pixel)
+    cy: 360.0              # Centro ottico Y (pixel)
+  
+  # Coefficienti di distorsione [k1, k2, p1, p2, k3]
+  distortion:
+    k1: 0.0
+    k2: 0.0
+    p1: 0.0
+    p2: 0.0
+    k3: 0.0
+  
+  # Risoluzione video
+  resolution:
+    width: 1280
+    height: 720
+  
+  # Frame rate
+  fps: 30
+
+# Calibrazione scacchiera (per ricalcolare parametri)
+calibration:
+  pattern:
+    type: "chessboard"       # Tipo pattern: chessboard, circles, asymmetric_circles
+    size: [9, 6]             # Numero angoli interni [colonne, righe]
+    square_size: 0.025       # Dimensione quadrato in metri (2.5 cm)
+  
+  images_path: "data/calibration/images/"
+  output_file: "data/calibration/camera1.npy"
+  
+  # Criteri di ottimizzazione
+  criteria:
+    max_iterations: 30
+    epsilon: 0.001
+
+# PnP solver
+pnp:
+  method: "ITERATIVE"        # Opzioni: ITERATIVE, P3P, EPNP, DLS, UPNP
+  use_extrinsic_guess: false # Usa posa precedente come guess
+  refine_iterations: 10      # Iterazioni refinement
+  
+  # RANSAC (se abilitato)
+  ransac:
+    enabled: false
+    reprojection_error: 8.0  # Errore max in pixel
+    confidence: 0.99         # Confidenza RANSAC
+
+# Output
+output:
+  save_camera_matrix: true   # Salva matrice camera nei risultati
+  save_distortion: true      # Salva coefficienti distorsione
