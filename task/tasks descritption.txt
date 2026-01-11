@@ -1,0 +1,182 @@
+Scopo Generale
+
+Lo scopo del progetto è sviluppare un sistema informatico in grado di stimare, per ogni istante di tempo, la posizione e l’orientamento tridimensionale (3D) di un veicolo in movimento, osservato da una singola telecamera fissa.
+
+A partire da questa stima, il sistema deve determinare lo spazio occupato dal veicolo sulla strada, rappresentandolo come un bounding box 3D (parallelepipedo) con dimensioni note, allineato alla posa stimata del veicolo.
+
+Il problema non richiede una ricostruzione 3D completa della scena, né tecniche di SLAM o mappatura globale:
+l’obiettivo è la stima della posa del veicolo e del suo ingombro, frame per frame.
+
+Input Noti
+
+Il sistema dispone dei seguenti dati noti:
+
+Matrice di calibrazione intrinseca K della telecamera
+La matrice K è nota e consente di convertire punti immagine 2D in direzioni nello spazio 3D.
+
+Modello geometrico del veicolo
+Sono note:
+
+lunghezza, larghezza e altezza del veicolo
+
+posizioni relative di elementi caratteristici (in particolare le luci posteriori)
+
+distanza tra le luci, altezza da terra, simmetrie geometriche
+
+Video acquisito da una telecamera fissa
+Il veicolo è visibile in uno o più fotogrammi consecutivi.
+
+Assunzioni Fondamentali
+
+Il sistema può fare le seguenti assunzioni semplificative:
+
+La strada è piana
+
+Il veicolo è simmetrico rispetto a un piano verticale
+
+Il movimento del veicolo tra fotogrammi consecutivi è semplice:
+
+oppure una traslazione rettilinea
+
+oppure una sterzata a curvatura costante
+
+Queste assunzioni sono parte integrante del problema e possono essere sfruttate dagli algoritmi.
+
+Struttura del Progetto
+
+Il progetto è organizzato come tre tecniche alternative di localizzazione, chiamate Task.
+Ogni task rappresenta un metodo indipendente per stimare la posa del veicolo in condizioni diverse.
+
+I task non devono necessariamente essere concatenati:
+ognuno può essere applicato separatamente a seconda del contesto (prospettiva, illuminazione, tipo di moto).
+
+Task 1 – Localizzazione da Immagine Singola (Punti Complanari)
+Scopo
+
+Stimare la posizione e l’orientamento del veicolo utilizzando un singolo fotogramma, sfruttando la geometria di punti noti complanari sul veicolo.
+
+Procedura Concettuale
+
+Dal modello CAD del veicolo, selezionare quattro punti 3D complanari sul piano posteriore
+(ad esempio: angoli della targa e punti simmetrici sulle luci posteriori).
+
+Rilevare le coordinate 2D di questi punti nell’immagine.
+
+Calcolare l’omografia H che mette in relazione il piano del veicolo con il piano immagine.
+
+Usare la relazione:
+
+[ r1  r2  oπ ] = K⁻¹ · H
+
+
+per estrarre:
+
+orientamento del piano
+
+posizione del piano rispetto alla telecamera
+
+Da orientamento e posizione del piano, stimare la posa completa del veicolo.
+
+Output Atteso
+
+Posizione 3D del veicolo
+
+Orientamento del veicolo
+
+Bounding box 3D allineato alla posa stimata
+
+Limiti
+
+Questo metodo può diventare instabile quando:
+
+la prospettiva è debole
+
+la telecamera è molto lontana
+
+il piano posteriore è quasi fronto-parallelo all’immagine
+
+Task 2 – Localizzazione Notturna da Due Immagini (Moto Traslatorio)
+Scopo
+
+Localizzare il veicolo in condizioni di scarsa illuminazione, utilizzando solo le luci posteriori e il loro movimento tra due fotogrammi consecutivi, assumendo moto rettilineo.
+
+Procedura Concettuale
+
+Identificare le due luci posteriori nel primo fotogramma
+→ segmento L₁′–R₁′
+
+Identificare le stesse luci nel secondo fotogramma
+→ segmento L₂′–R₂′
+
+Calcolare il punto di fuga Vₓ come intersezione delle rette:
+
+(L₁′, L₂′)
+
+(R₁′, R₂′)
+
+Convertire Vₓ in una direzione 3D tramite K⁻¹.
+
+Stimare la direzione del moto del veicolo e verificare che:
+
+la direzione del segmento di luci
+
+la direzione del moto
+
+siano perpendicolari, confermando il moto traslatorio.
+
+Stimare la distanza del piano π su cui giacciono le luci, usando relazioni geometriche e vincoli metrici noti.
+
+Posizionare il modello 3D del veicolo a partire dalla posizione stimata delle luci.
+
+Output Atteso
+
+Posizione 3D delle luci posteriori
+
+Posa del veicolo
+
+Bounding box 3D del veicolo
+
+Task 3 – Localizzazione con Elementi Simmetrici Non Complanari
+Scopo
+
+Stimare in modo robusto l’angolo di rotazione orizzontale θ del veicolo quando la prospettiva è scarsa, sfruttando più coppie di elementi simmetrici.
+
+Procedura Concettuale
+
+Dal modello CAD, selezionare almeno due coppie di punti simmetrici non complanari
+(ad esempio punti interni ed esterni delle luci posteriori).
+
+Misurare le coordinate 2D di questi punti nell’immagine.
+
+Analizzare come la simmetria reale viene deformata dalla prospettiva.
+
+Calcolare l’angolo di rotazione orizzontale θ del veicolo rispetto alla telecamera.
+
+Usare θ e la lunghezza apparente del segmento tra le luci per stimare la distanza del veicolo.
+
+Output Atteso
+
+Angolo di rotazione θ
+
+Posizione 3D del veicolo
+
+Bounding box 3D correttamente orientato
+
+Output Finale Comune a Tutti i Task
+
+Indipendentemente dal task utilizzato, l’output finale del sistema deve essere:
+
+Posa 3D del veicolo (posizione + orientamento)
+
+Bounding box 3D con dimensioni note (lunghezza, larghezza, altezza)
+
+Occupazione di spazio del veicolo nel sistema di riferimento della telecamera
+
+Nota Finale per il Sistema
+
+I tre task rappresentano strategie geometriche alternative per risolvere lo stesso problema di localizzazione.
+Il sistema può:
+
+sceglierne uno in base alle condizioni
+
+oppure confrontarne i risultati per maggiore robustezza.
