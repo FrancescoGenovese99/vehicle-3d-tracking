@@ -181,7 +181,22 @@ def process_video_task1(video_path: str, camera_matrix, dist_coeffs, config):
 
 
 def process_video_task2(video_path: str, camera_matrix, dist_coeffs, config):
-    """Process video using Task 2: Vanishing point method."""
+    """Process video using Task 2: Vanishing point method."""    # Helper: convert format for tracker
+    def to_tracker_format(lights):
+        """Convert numpy array to tuple format for tracker."""
+        if lights is None:
+            return None
+        return tuple(map(tuple, lights))
+    
+    def to_numpy_format(lights):
+        """Convert tracker output to numpy array."""
+        if lights is None:
+            return None
+        if isinstance(lights, tuple):
+            return np.array(lights)
+        return lights
+    
+
     print("\n🌙 Task 2: Localizzazione da Punto di Fuga (luci notturne)")
     print("=" * 60)
     
@@ -201,7 +216,9 @@ def process_video_task2(video_path: str, camera_matrix, dist_coeffs, config):
     detector = LightDetector(config['detection_params'])
     tracker = VehicleTracker(config['tracking'])
     vp_solver = VanishingPointSolver(camera_matrix, config['vehicle_model'])
-    bbox_projector = BBox3DProjector(camera_matrix, dist_coeffs, config['vehicle_model'])
+    from calibration.load_calibration import CameraParameters
+    cam_params = CameraParameters(camera_matrix, dist_coeffs)
+    bbox_projector = BBox3DProjector(cam_params, config['vehicle_model'])
     
     # Open video
     cap = cv2.VideoCapture(video_path)
@@ -247,15 +264,17 @@ def process_video_task2(video_path: str, camera_matrix, dist_coeffs, config):
         if frame_idx == 0:
             lights = detector.detect_tail_lights(frame)
             if lights is not None:
-                tracker.init_tracking(frame, lights)
+                # Converti da numpy array a tuple di tuple
+                tracker.initialize(frame, to_tracker_format(lights))
                 prev_lights = lights
         else:
             lights = tracker.update(frame)
+            lights = to_numpy_format(lights)
             
             if lights is None:
                 lights = detector.detect_tail_lights(frame)
                 if lights is not None:
-                    tracker.init_tracking(frame, lights)
+                    tracker.initialize(frame, to_tracker_format(lights))
         
         # Default motion type
         motion_type = "UNKNOWN"
@@ -421,13 +440,14 @@ def process_video_pnp(video_path: str, camera_matrix, dist_coeffs, config):
         if frame_idx == 0:
             lights = detector.detect_tail_lights(frame)
             if lights is not None:
-                tracker.init_tracking(frame, lights)
+                tracker.initialize(frame, to_tracker_format(lights))
         else:
             lights = tracker.update(frame)
+            lights = to_numpy_format(lights)
             if lights is None:
                 lights = detector.detect_tail_lights(frame)
                 if lights is not None:
-                    tracker.init_tracking(frame, lights)
+                    tracker.initialize(frame, to_tracker_format(lights))
         
         motion_type = "UNKNOWN"
         

@@ -7,14 +7,12 @@ services:
       dockerfile: Dockerfile
     container_name: vehicle_3d_tracker
     volumes:
-      - ./data:/app/data
-      - ./config:/app/config
-      - ./src:/app/src
-      - ./scripts:/app/scripts
-      - ./notebooks:/app/notebooks
+      - .:/app
+    working_dir: /app
+
     environment:
       - PYTHONUNBUFFERED=1
-      - DISPLAY=${DISPLAY}
+      - DISPLAY=host.docker.internal:0
     stdin_open: true
     tty: true
     command: /bin/bash
@@ -27,10 +25,16 @@ services:
     ports:
       - "8888:8888"
     volumes:
-      - ./data:/app/data
-      - ./config:/app/config
-      - ./src:/app/src
-      - ./notebooks:/app/notebooks
+      - .:/app
+    working_dir: /app
     environment:
       - PYTHONUNBUFFERED=1
-    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
+      - DISPLAY=host.docker.internal:0
+    command: >
+      jupyter notebook
+      --ip=0.0.0.0
+      --port=8888
+      --no-browser
+      --allow-root
+      --NotebookApp.token=''
+      --NotebookApp.password=''

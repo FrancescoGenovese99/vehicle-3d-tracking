@@ -295,3 +295,5 @@ class MultiObjectTracker:
                 self.deregister(obj_id)
         
         return self.objects
+# Alias for compatibility with vehicle_localization_system.py
+VehicleTracker = LightTracker

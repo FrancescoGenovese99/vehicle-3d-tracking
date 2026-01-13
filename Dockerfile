@@ -10,25 +10,18 @@ RUN apt-get update && apt-get install -y \
     libgomp1 \
     libgstreamer1.0-0 \
     libgstreamer-plugins-base1.0-0 \
+    python3-tk \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Set working directory (bind-mounted)
 WORKDIR /app
 
 # Copy requirements first for better caching
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy project files
-COPY . .
-
-# Create necessary directories
-RUN mkdir -p data/videos/input data/videos/output \
-    data/calibration/images data/results/tracked_points \
-    data/results/poses data/results/bbox_3d
-
 # Set Python path
 ENV PYTHONPATH=/app
 
 # Default command
-CMD ["python", "scripts/process_video.py", "--help"]
+CMD ["bash"]

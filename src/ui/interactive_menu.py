@@ -1,17 +1,16 @@
 """
-Interactive menu for video and method selection.
+Interactive CLI menu for video and method selection (Docker-compatible).
 """
 
 import os
-import tkinter as tk
-from tkinter import ttk, messagebox
 from pathlib import Path
 from typing import Optional, Tuple
+import subprocess
 
 
 class VideoMethodSelector:
     """
-    Interactive GUI for selecting:
+    Interactive CLI for selecting:
     1. Input video from data/videos/input/
     2. Localization method (Task 1, Task 2, PnP)
     """
@@ -23,14 +22,10 @@ class VideoMethodSelector:
         
         # Method mapping
         self.methods = {
-            "Task 1: Omografia (4 punti targa)": "homography",
-            "Task 2: Punto di Fuga (luci notturne)": "vanishing_point",
-            "PnP: Metodo Diretto (confronto)": "pnp"
+            "1": ("Task 1: Omografia (4 punti targa)", "homography"),
+            "2": ("Task 2: Punto di Fuga (luci notturne)", "vanishing_point"),
+            "3": ("PnP: Metodo Diretto (confronto)", "pnp")
         }
-        
-        self.root = None
-        self.video_listbox = None
-        self.method_var = None
         
     def get_available_videos(self):
         """Scan videos directory for .mp4 files."""
@@ -40,183 +35,157 @@ class VideoMethodSelector:
         videos = list(self.videos_dir.glob("*.mp4"))
         return sorted([v.name for v in videos])
     
-    def create_gui(self):
-        """Create the selection GUI."""
-        self.root = tk.Tk()
-        self.root.title("Vehicle 3D Localization - Setup")
-        self.root.geometry("600x500")
-        self.root.resizable(False, False)
-        
-        # Title
-        title_label = tk.Label(
-            self.root,
-            text="🚗 Vehicle 3D Localization System",
-            font=("Arial", 16, "bold"),
-            pady=20
-        )
-        title_label.pack()
-        
-        # --- Video Selection Section ---
-        video_frame = ttk.LabelFrame(
-            self.root,
-            text="1. Seleziona Video",
-            padding=20
-        )
-        video_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        
-        # Video list
-        video_scroll = ttk.Scrollbar(video_frame)
-        video_scroll.pack(side="right", fill="y")
-        
-        self.video_listbox = tk.Listbox(
-            video_frame,
-            height=6,
-            yscrollcommand=video_scroll.set,
-            font=("Courier", 10)
-        )
-        self.video_listbox.pack(fill="both", expand=True)
-        video_scroll.config(command=self.video_listbox.yview)
-        
-        # Populate video list
+    def print_header(self):
+        """Print fancy header."""
+        print("\n" + "="*60)
+        print("🚗  VEHICLE 3D LOCALIZATION SYSTEM")
+        print("="*60 + "\n")
+    
+    def select_video(self):
+        """Interactive video selection."""
         videos = self.get_available_videos()
+        
         if not videos:
-            self.video_listbox.insert(0, "⚠️ Nessun video trovato in data/videos/input/")
-            self.video_listbox.config(state="disabled")
-        else:
-            for video in videos:
-                self.video_listbox.insert(tk.END, video)
+            print("❌ Nessun video trovato in data/videos/input/")
+            print("   Aggiungi file .mp4 nella cartella e riprova.\n")
+            return False
         
-        # --- Method Selection Section ---
-        method_frame = ttk.LabelFrame(
-            self.root,
-            text="2. Seleziona Metodo di Localizzazione",
-            padding=20
-        )
-        method_frame.pack(fill="both", expand=True, padx=20, pady=10)
+        print("📹 VIDEO DISPONIBILI:\n")
+        for i, video in enumerate(videos, 1):
+            print(f"  [{i}] {video}")
         
-        self.method_var = tk.StringVar(value="Task 2: Punto di Fuga (luci notturne)")
+        print(f"\n  [0] Annulla\n")
         
-        for method_name in self.methods.keys():
-            rb = ttk.Radiobutton(
-                method_frame,
-                text=method_name,
-                variable=self.method_var,
-                value=method_name
+        while True:
+            try:
+                choice = input("Seleziona video (numero): ").strip()
+                
+                if choice == "0":
+                    return False
+                
+                idx = int(choice) - 1
+                if 0 <= idx < len(videos):
+                    self.selected_video = videos[idx]
+                    print(f"\n✓ Video selezionato: {self.selected_video}\n")
+                    return True
+                else:
+                    print(f"⚠️  Numero non valido. Scegli tra 1 e {len(videos)}")
+            except ValueError:
+                print("⚠️  Inserisci un numero valido")
+            except KeyboardInterrupt:
+                print("\n\n❌ Operazione annullata\n")
+                return False
+    
+    def select_method(self):
+        """Interactive method selection."""
+        print("🔬 METODI DI LOCALIZZAZIONE:\n")
+        
+        for key, (name, _) in self.methods.items():
+            print(f"  [{key}] {name}")
+        
+        print("\n  Descrizioni:")
+        print("    • Task 1: Ambiente diurno, targa visibile (omografia 4 punti)")
+        print("    • Task 2: Ambiente notturno, solo luci posteriori (punto di fuga)")
+        print("    • PnP: Metodo alternativo per confronto (solvePnP diretto)")
+        print("\n  [0] Annulla\n")
+        
+        while True:
+            try:
+                choice = input("Seleziona metodo (numero): ").strip()
+                
+                if choice == "0":
+                    return False
+                
+                if choice in self.methods:
+                    method_name, method_code = self.methods[choice]
+                    self.selected_method = method_code
+                    print(f"\n✓ Metodo selezionato: {method_name}\n")
+                    return True
+                else:
+                    print("⚠️  Numero non valido. Scegli 1, 2 o 3")
+            except KeyboardInterrupt:
+                print("\n\n❌ Operazione annullata\n")
+                return False
+    
+    def confirm_and_run(self):
+        """Show summary and confirm."""
+        print("-" * 60)
+        print("📋 RIEPILOGO SELEZIONE:\n")
+        print(f"  Video:  {self.selected_video}")
+        print(f"  Metodo: {self.selected_method}")
+        print("-" * 60 + "\n")
+        
+        while True:
+            confirm = input("Avviare il processing? [S/n]: ").strip().lower()
+            
+            if confirm in ["", "s", "si", "y", "yes"]:
+                return True
+            elif confirm in ["n", "no"]:
+                print("\n❌ Processing annullato\n")
+                return False
+            else:
+                print("⚠️  Rispondi con S (sì) o N (no)")
+    
+    def run_processing(self):
+        """Execute the processing script."""
+        video_path = str(self.videos_dir / self.selected_video)
+        
+        print("\n" + "="*60)
+        print("🚀 AVVIO PROCESSING...")
+        print("="*60 + "\n")
+        
+        try:
+            result = subprocess.run(
+                [
+                    "python", "src/scripts/process_video.py",
+                    "--video", video_path,
+                    "--method", self.selected_method
+                ],
+                check=True
             )
-            rb.pack(anchor="w", pady=5)
+            
+            print("\n" + "="*60)
+            print("✅ PROCESSING COMPLETATO CON SUCCESSO!")
+            print("="*60)
+            print(f"\n📁 Output salvato in: data/videos/output/\n")
+            
+        except subprocess.CalledProcessError as e:
+            print("\n" + "="*60)
+            print("❌ ERRORE DURANTE IL PROCESSING")
+            print("="*60)
+            print(f"\nCodice errore: {e.returncode}\n")
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Processing interrotto dall'utente\n")
+        except Exception as e:
+            print(f"\n❌ Errore imprevisto: {e}\n")
+    
+    def run(self):
+        """Run the interactive CLI menu."""
+        self.print_header()
         
-        # Method descriptions
-        desc_text = tk.Text(method_frame, height=4, wrap="word", font=("Arial", 9))
-        desc_text.pack(fill="x", pady=10)
-        desc_text.insert("1.0", 
-            "Task 1: Ambiente diurno, targa visibile (omografia 4 punti)\n"
-            "Task 2: Ambiente notturno, solo luci posteriori (punto di fuga)\n"
-            "PnP: Metodo alternativo per confronto (solvePnP diretto)"
-        )
-        desc_text.config(state="disabled")
-        
-        # --- Action Buttons ---
-        button_frame = tk.Frame(self.root)
-        button_frame.pack(pady=20)
-        
-        start_btn = ttk.Button(
-            button_frame,
-            text="▶ Avvia Processing",
-            command=self.on_start,
-            width=20
-        )
-        start_btn.pack(side="left", padx=10)
-        
-        cancel_btn = ttk.Button(
-            button_frame,
-            text="✖ Annulla",
-            command=self.on_cancel,
-            width=20
-        )
-        cancel_btn.pack(side="left", padx=10)
-        
-    def on_start(self):
-        """Handle start button click."""
-        # Get selected video
-        selection = self.video_listbox.curselection()
-        if not selection:
-            messagebox.showerror(
-                "Errore",
-                "Seleziona un video dalla lista!"
-            )
+        # Step 1: Select video
+        if not self.select_video():
             return
         
-        self.selected_video = self.video_listbox.get(selection[0])
-        
-        # Check if video exists (not the warning message)
-        if self.selected_video.startswith("⚠️"):
-            messagebox.showerror(
-                "Errore",
-                "Nessun video disponibile. Aggiungi file .mp4 in data/videos/input/"
-            )
+        # Step 2: Select method
+        if not self.select_method():
             return
         
-        # Get selected method
-        method_name = self.method_var.get()
-        self.selected_method = self.methods[method_name]
-        
-        # Confirm selection
-        confirm = messagebox.askyesno(
-            "Conferma",
-            f"Video: {self.selected_video}\n"
-            f"Metodo: {method_name}\n\n"
-            f"Procedere con il processing?"
-        )
-        
-        if confirm:
-            self.root.quit()
-            self.root.destroy()
-    
-    def on_cancel(self):
-        """Handle cancel button click."""
-        self.selected_video = None
-        self.selected_method = None
-        self.root.quit()
-        self.root.destroy()
-    
-    def run(self) -> Tuple[Optional[str], Optional[str]]:
-        """
-        Run the interactive menu.
-        
-        Returns:
-            (video_filename, method_name) or (None, None) if cancelled
-        """
-        self.create_gui()
-        self.root.mainloop()
-        
-        return self.selected_video, self.selected_method
+        # Step 3: Confirm and run
+        if self.confirm_and_run():
+            self.run_processing()
 
 
-def select_video_and_method() -> Tuple[Optional[str], Optional[str]]:
+def select_video_and_method():
     """
     Convenience function to run the selector.
-    
-    Returns:
-        (video_path, method) tuple
-        - video_path: full path to selected video or None
-        - method: 'homography' | 'vanishing_point' | 'pnp' or None
     """
     selector = VideoMethodSelector()
-    video_name, method = selector.run()
-    
-    if video_name and method:
-        video_path = Path("data/videos/input") / video_name
-        return str(video_path), method
-    
-    return None, None
+    selector.run()
 
 
 if __name__ == "__main__":
-    # Test the menu
-    video, method = select_video_and_method()
-    
-    if video and method:
-        print(f"✓ Video selezionato: {video}")
-        print(f"✓ Metodo selezionato: {method}")
-    else:
-        print("✗ Selezione annullata")
+    try:
+        select_video_and_method()
+    except KeyboardInterrupt:
+        print("\n\n👋 Arrivederci!\n")
