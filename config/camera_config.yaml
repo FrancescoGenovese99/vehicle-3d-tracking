@@ -1,10 +1,10 @@
 # Configurazione camera e calibrazione
 
 camera:
-  # Path al file di calibrazione (.npy contiene matrice intrinseca e coefficienti distorsione)
-  calibration_file: "data/calibration/camera1.npy"
+  # Path al file di calibrazione (.npz contiene matrice intrinseca e coefficienti distorsione)
+  calibration_file: "data/calibration/camera1.npz"
   
-  # Parametri intrinseci (opzionale, se non usi .npy)
+  # Parametri intrinseci (opzionale, se non usi .npz)
   # Matrice intrinseca K = [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
   intrinsics:
     fx: 800.0              # Lunghezza focale X (pixel)

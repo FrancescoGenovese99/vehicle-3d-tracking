@@ -218,3 +218,26 @@ def frames_to_video(frames_pattern: str, output_path: str,
                 writer.write_frame(frame)
     
     print(f"✓ Video creato da {len(frame_files)} frame")
+
+# Alias for backward compatibility
+VideoWriter = VideoWriterManager
+
+
+# Compatibility wrapper with simpler interface
+class VideoWriter:
+    """Simple VideoWriter wrapper for compatibility."""
+    
+    def __init__(self, output_path: str, fps: int, frame_size: tuple, fourcc: str = 'mp4v'):
+        self.manager = VideoWriterManager(output_path, fps, frame_size, fourcc)
+    
+    def write(self, frame):
+        self.manager.write_frame(frame)
+    
+    def release(self):
+        self.manager.release()
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.release()

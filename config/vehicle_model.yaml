@@ -125,3 +125,15 @@ vehicle:
 # - Per massima precisione, misura fisicamente la posizione dei fari sul tuo veicolo
 # - Le distanze tra i fari sono cruciali per la stima della posa 3D accurata
 # - Verifica che le coordinate siano coerenti con il tuo sistema di riferimento
+
+
+# Coordinate 3D targa posteriore (Task 1)
+  license_plate:
+    corners:
+      top_left: [-0.30, 0.26, 0.455]      # [X, Y, Z] metri
+      top_right: [-0.30, -0.26, 0.455]
+      bottom_right: [-0.30, -0.26, 0.345]
+      bottom_left: [-0.30, 0.26, 0.345]
+    width: 0.52    # Larghezza targa (metri) - EU plate 520mm
+    height: 0.11   # Altezza targa (metri) - EU plate 110mm
+    center: [-0.30, 0.0, 0.40]  # Centro targa

@@ -1,5 +1,6 @@
 """
 Draw Utils - Funzioni di utilità per disegnare su frame.
+VERSIONE 2 - Con motion type overlay e vanishing point visualization
 """
 
 import cv2
@@ -7,9 +8,241 @@ import numpy as np
 from typing import Tuple, Optional, Dict, List
 
 
+def draw_tracking_info(frame: np.ndarray,
+                      frame_idx: int,
+                      method: str,
+                      distance: float,
+                      num_points: int) -> None:
+    """
+    Disegna info tracking in alto a sinistra.
+    
+    Args:
+        frame: Frame da modificare (in-place)
+        frame_idx: Numero frame
+        method: Nome metodo ("Vanishing Point", "PnP", ecc.)
+        distance: Distanza veicolo in metri
+        num_points: Numero punti tracciati
+    """
+    y_offset = 30
+    cv2.putText(frame, f"Frame: {frame_idx}", (10, y_offset),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    
+    y_offset += 25
+    cv2.putText(frame, f"Method: {method}", (10, y_offset),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    
+    y_offset += 25
+    cv2.putText(frame, f"Distance: {distance:.2f}m", (10, y_offset),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    
+    y_offset += 25
+    cv2.putText(frame, f"Points: {num_points}", (10, y_offset),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+
+def draw_motion_type_overlay(frame: np.ndarray,
+                             motion_type: str,
+                             bg_alpha: float = 0.6) -> None:
+    """
+    Disegna scritta MOTION TYPE in alto al centro con sfondo semi-trasparente.
+    
+    Args:
+        frame: Frame da modificare (in-place)
+        motion_type: "TRANSLATION", "ROTATION", o "MIXED"
+        bg_alpha: Trasparenza sfondo (0-1)
+    """
+    h, w = frame.shape[:2]
+    
+    # Colore testo (SEMPRE GIALLO per alta visibilità)
+    text_color = (0, 255, 255)  # Giallo in BGR
+    
+    # Colore sfondo basato su tipo
+    if motion_type == "TRANSLATION":
+        bg_color = (0, 128, 0)  # Verde scuro
+    elif motion_type == "ROTATION":
+        bg_color = (0, 0, 128)  # Rosso scuro
+    else:
+        bg_color = (0, 82, 128)  # Arancione scuro
+    
+    # Testo
+    text = f"MOTION: {motion_type}"
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 1.2
+    thickness = 3
+    
+    # Calcola dimensioni testo
+    (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
+    
+    # Posizione centrata in alto
+    x = (w - text_w) // 2
+    y = 50
+    
+    # Crea overlay per sfondo semi-trasparente
+    overlay = frame.copy()
+    
+    # Rettangolo sfondo
+    padding = 15
+    cv2.rectangle(overlay,
+                 (x - padding, y - text_h - padding),
+                 (x + text_w + padding, y + baseline + padding),
+                 bg_color, -1)
+    
+    # Blend sfondo
+    cv2.addWeighted(overlay, bg_alpha, frame, 1 - bg_alpha, 0, frame)
+    
+    # Testo in primo piano (GIALLO)
+    cv2.putText(frame, text, (x, y),
+               font, font_scale, text_color, thickness, cv2.LINE_AA)
+
+
+def draw_vanishing_point_lines(frame: np.ndarray,
+                               lights_prev: np.ndarray,
+                               lights_curr: np.ndarray,
+                               vanishing_point: Optional[np.ndarray] = None) -> None:
+    """
+    Disegna le linee delle traiettorie delle luci e il punto di fuga.
+    
+    Args:
+        frame: Frame da modificare (in-place)
+        lights_prev: Luci frame precedente [[x1,y1], [x2,y2]]
+        lights_curr: Luci frame corrente [[x1,y1], [x2,y2]]
+        vanishing_point: Punto di fuga [u, v] (opzionale)
+    """
+    if lights_prev is None or lights_curr is None:
+        return
+    
+    h, w = frame.shape[:2]
+    
+    # Colori
+    left_color = (255, 255, 0)   # Ciano per luce sinistra
+    right_color = (255, 0, 255)  # Magenta per luce destra
+    vp_color = (0, 0, 255)       # Rosso per punto di fuga
+    
+    # Linea traiettoria luce SINISTRA (L_prev → L_curr)
+    L_prev = tuple(lights_prev[0].astype(int))
+    L_curr = tuple(lights_curr[0].astype(int))
+    
+    # Estendi la linea fino ai bordi del frame se possibile
+    if vanishing_point is not None:
+        vp = tuple(vanishing_point.astype(int))
+        # Linea da L_curr verso VP (estesa)
+        cv2.line(frame, L_curr, vp, left_color, 2, cv2.LINE_AA)
+    else:
+        # Linea normale tra frame consecutivi
+        cv2.line(frame, L_prev, L_curr, left_color, 2, cv2.LINE_AA)
+    
+    # Linea traiettoria luce DESTRA (R_prev → R_curr)
+    R_prev = tuple(lights_prev[1].astype(int))
+    R_curr = tuple(lights_curr[1].astype(int))
+    
+    if vanishing_point is not None:
+        vp = tuple(vanishing_point.astype(int))
+        # Linea da R_curr verso VP (estesa)
+        cv2.line(frame, R_curr, vp, right_color, 2, cv2.LINE_AA)
+    else:
+        cv2.line(frame, R_prev, R_curr, right_color, 2, cv2.LINE_AA)
+    
+    # Cerchi sulle posizioni precedenti (più piccoli)
+    cv2.circle(frame, L_prev, 3, left_color, -1)
+    cv2.circle(frame, R_prev, 3, right_color, -1)
+    
+    # Cerchi sulle posizioni correnti (più grandi)
+    cv2.circle(frame, L_curr, 6, (0, 255, 0), -1)  # Verde
+    cv2.circle(frame, R_curr, 6, (0, 255, 0), -1)
+    
+    # Etichette
+    cv2.putText(frame, "L", (L_curr[0] - 20, L_curr[1] - 10),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+    cv2.putText(frame, "R", (R_curr[0] + 10, R_curr[1] - 10),
+               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+    
+    # Disegna punto di fuga se disponibile
+    if vanishing_point is not None:
+        vp = tuple(vanishing_point.astype(int))
+        
+        # Verifica se VP è dentro il frame (altrimenti disegna freccia)
+        if 0 <= vp[0] < w and 0 <= vp[1] < h:
+            # VP dentro il frame: disegna croce + cerchio
+            cv2.drawMarker(frame, vp, vp_color, 
+                         cv2.MARKER_CROSS, 30, 3)
+            cv2.circle(frame, vp, 10, vp_color, 2)
+            
+            # Etichetta VP
+            cv2.putText(frame, "VP", (vp[0] + 15, vp[1] - 15),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, vp_color, 2)
+        else:
+            # VP fuori dal frame: indica direzione con freccia
+            # Calcola punto sul bordo nella direzione del VP
+            center = (w // 2, h // 2)
+            
+            # Direzione verso VP
+            dx = vp[0] - center[0]
+            dy = vp[1] - center[1]
+            length = np.sqrt(dx**2 + dy**2)
+            
+            if length > 0:
+                dx /= length
+                dy /= length
+                
+                # Punto sul bordo
+                edge_x = center[0] + int(dx * min(w, h) * 0.4)
+                edge_y = center[1] + int(dy * min(w, h) * 0.4)
+                
+                # Freccia verso VP
+                cv2.arrowedLine(frame, center, (edge_x, edge_y),
+                              vp_color, 3, tipLength=0.3)
+                
+                # Etichetta
+                cv2.putText(frame, "VP →", (edge_x + 10, edge_y),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, vp_color, 2)
+
+
+def draw_bbox_3d(frame: np.ndarray,
+                projected_points: np.ndarray,
+                color: Tuple[int, int, int] = (0, 255, 0),
+                thickness: int = 2) -> None:
+    """
+    Disegna la bounding box 3D sul frame.
+    
+    Args:
+        frame: Frame da modificare (in-place)
+        projected_points: Punti 2D proiettati (8, 2)
+        color: Colore BGR
+        thickness: Spessore linee
+    """
+    if projected_points is None or len(projected_points) != 8:
+        return
+    
+    # Converti a int
+    pts = projected_points.astype(int)
+    
+    # Indici vertici: [0-3] base, [4-7] top
+    # 0: post-dx, 1: post-sx, 2: front-sx, 3: front-dx
+    
+    # Base
+    base_edges = [(0, 1), (1, 2), (2, 3), (3, 0)]
+    for i, j in base_edges:
+        cv2.line(frame, tuple(pts[i]), tuple(pts[j]), color, thickness)
+    
+    # Top
+    top_edges = [(4, 5), (5, 6), (6, 7), (7, 4)]
+    for i, j in top_edges:
+        cv2.line(frame, tuple(pts[i]), tuple(pts[j]), color, thickness)
+    
+    # Pilastri verticali
+    vertical_edges = [(0, 4), (1, 5), (2, 6), (3, 7)]
+    for i, j in vertical_edges:
+        cv2.line(frame, tuple(pts[i]), tuple(pts[j]), color, thickness)
+    
+    # Evidenzia posteriore (dove sono le luci) in ROSSO
+    rear_color = (0, 0, 255)
+    cv2.line(frame, tuple(pts[0]), tuple(pts[1]), rear_color, thickness + 1)
+    cv2.line(frame, tuple(pts[4]), tuple(pts[5]), rear_color, thickness + 1)
+
+
 class DrawUtils:
     """
-    Utilità per disegnare elementi sui frame (tracking, bbox, info).
+    Classe helper per funzioni di disegno (per compatibilità).
     """
     
     @staticmethod
@@ -19,286 +252,17 @@ class DrawUtils:
                            radius: int = 5,
                            thickness: int = -1,
                            labels: bool = True) -> np.ndarray:
-        """
-        Disegna i punti tracciati (fari) sul frame.
-        
-        Args:
-            frame: Frame su cui disegnare
-            points: Tuple ((left_x, left_y), (right_x, right_y))
-            color: Colore BGR
-            radius: Raggio dei cerchi
-            thickness: Spessore (-1 = riempito)
-            labels: Se True, aggiunge etichette "L" e "R"
-            
-        Returns:
-            Frame con punti disegnati
-        """
         frame_copy = frame.copy()
-        
         left, right = points
         
-        # Disegna cerchi
         cv2.circle(frame_copy, left, radius, color, thickness)
         cv2.circle(frame_copy, right, radius, color, thickness)
-        
-        # Linea di connessione
         cv2.line(frame_copy, left, right, color, 2)
         
         if labels:
-            # Etichette
             cv2.putText(frame_copy, 'L', (left[0] - 20, left[1] - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             cv2.putText(frame_copy, 'R', (right[0] + 10, right[1] - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         
         return frame_copy
-    
-    @staticmethod
-    def draw_pose_info(frame: np.ndarray,
-                      pose_info: Dict,
-                      position: Tuple[int, int] = (10, 30),
-                      font_scale: float = 0.6,
-                      color: Tuple[int, int, int] = (255, 255, 255),
-                      thickness: int = 2,
-                      bg_color: Optional[Tuple[int, int, int]] = (0, 0, 0),
-                      bg_alpha: float = 0.7) -> np.ndarray:
-        """
-        Disegna informazioni sulla posa sul frame.
-        
-        Args:
-            frame: Frame su cui disegnare
-            pose_info: Dizionario con info posa (da PnPSolver.get_pose_info)
-            position: Posizione iniziale del testo (x, y)
-            font_scale: Scala del font
-            color: Colore testo BGR
-            thickness: Spessore testo
-            bg_color: Colore sfondo (None = nessuno sfondo)
-            bg_alpha: Trasparenza sfondo (0-1)
-            
-        Returns:
-            Frame con info disegnate
-        """
-        frame_copy = frame.copy()
-        
-        # Estrai info
-        trans = pose_info['translation']
-        rot = pose_info['rotation']
-        
-        # Prepara testo
-        lines = [
-            f"Distance: {trans['distance']:.2f}m",
-            f"Position: ({trans['x']:.2f}, {trans['y']:.2f}, {trans['z']:.2f})",
-            f"Yaw: {rot['yaw']:.1f}deg",
-            f"Pitch: {rot['pitch']:.1f}deg",
-            f"Roll: {rot['roll']:.1f}deg"
-        ]
-        
-        # Calcola dimensioni sfondo
-        line_height = int(30 * font_scale)
-        max_width = max([cv2.getTextSize(line, cv2.FONT_HERSHEY_SIMPLEX, 
-                                         font_scale, thickness)[0][0] for line in lines])
-        
-        if bg_color:
-            # Disegna sfondo semi-trasparente
-            x, y = position
-            overlay = frame_copy.copy()
-            cv2.rectangle(overlay, 
-                         (x - 5, y - 20),
-                         (x + max_width + 10, y + line_height * len(lines) + 10),
-                         bg_color, -1)
-            frame_copy = cv2.addWeighted(frame_copy, 1 - bg_alpha, overlay, bg_alpha, 0)
-        
-        # Disegna testo
-        x, y = position
-        for i, line in enumerate(lines):
-            y_pos = y + i * line_height
-            cv2.putText(frame_copy, line, (x, y_pos),
-                       cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
-        
-        return frame_copy
-    
-    @staticmethod
-    def draw_tracking_status(frame: np.ndarray,
-                           status: str,
-                           frame_number: int,
-                           position: Tuple[int, int] = None,
-                           color: Tuple[int, int, int] = None) -> np.ndarray:
-        """
-        Disegna lo status del tracking.
-        
-        Args:
-            frame: Frame su cui disegnare
-            status: Status string ("TRACKING", "LOST", "REDETECTING")
-            frame_number: Numero del frame corrente
-            position: Posizione (None = auto in alto a destra)
-            color: Colore (None = auto basato su status)
-            
-        Returns:
-            Frame con status disegnato
-        """
-        frame_copy = frame.copy()
-        h, w = frame_copy.shape[:2]
-        
-        # Colori di default basati su status
-        if color is None:
-            color_map = {
-                'TRACKING': (0, 255, 0),     # Verde
-                'LOST': (0, 0, 255),          # Rosso
-                'REDETECTING': (0, 165, 255), # Arancione
-                'INITIALIZING': (255, 255, 0) # Giallo
-            }
-            color = color_map.get(status.upper(), (255, 255, 255))
-        
-        # Posizione di default (alto a destra)
-        if position is None:
-            position = (w - 250, 30)
-        
-        # Testo
-        text = f"Frame: {frame_number} | {status}"
-        
-        # Sfondo
-        text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-        x, y = position
-        cv2.rectangle(frame_copy, 
-                     (x - 5, y - 25),
-                     (x + text_size[0] + 5, y + 5),
-                     (0, 0, 0), -1)
-        
-        # Testo
-        cv2.putText(frame_copy, text, position,
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-        
-        return frame_copy
-    
-    @staticmethod
-    def draw_detection_confidence(frame: np.ndarray,
-                                  confidence: float,
-                                  position: Tuple[int, int] = (10, 60)) -> np.ndarray:
-        """
-        Disegna una barra di confidenza per la detection.
-        
-        Args:
-            frame: Frame su cui disegnare
-            confidence: Valore di confidenza (0-1)
-            position: Posizione della barra
-            
-        Returns:
-            Frame con barra disegnata
-        """
-        frame_copy = frame.copy()
-        
-        bar_width = 200
-        bar_height = 20
-        x, y = position
-        
-        # Bordo
-        cv2.rectangle(frame_copy, (x, y), (x + bar_width, y + bar_height), 
-                     (255, 255, 255), 2)
-        
-        # Riempimento basato su confidenza
-        fill_width = int(bar_width * confidence)
-        
-        # Colore basato su confidenza
-        if confidence > 0.7:
-            color = (0, 255, 0)  # Verde
-        elif confidence > 0.4:
-            color = (0, 165, 255)  # Arancione
-        else:
-            color = (0, 0, 255)  # Rosso
-        
-        cv2.rectangle(frame_copy, (x, y), (x + fill_width, y + bar_height),
-                     color, -1)
-        
-        # Testo
-        text = f"Confidence: {confidence:.2f}"
-        cv2.putText(frame_copy, text, (x, y - 5),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        
-        return frame_copy
-    
-    @staticmethod
-    def draw_trajectory(frame: np.ndarray,
-                       trajectory: List[Tuple[int, int]],
-                       color: Tuple[int, int, int] = (255, 0, 255),
-                       thickness: int = 2,
-                       max_points: int = 50) -> np.ndarray:
-        """
-        Disegna la traiettoria del veicolo.
-        
-        Args:
-            frame: Frame su cui disegnare
-            trajectory: Lista di posizioni [(x, y), ...]
-            color: Colore BGR
-            thickness: Spessore linea
-            max_points: Numero massimo di punti da visualizzare
-            
-        Returns:
-            Frame con traiettoria disegnata
-        """
-        frame_copy = frame.copy()
-        
-        if len(trajectory) < 2:
-            return frame_copy
-        
-        # Limita ai max_points più recenti
-        recent_trajectory = trajectory[-max_points:]
-        
-        # Disegna linee tra punti consecutivi
-        for i in range(len(recent_trajectory) - 1):
-            pt1 = recent_trajectory[i]
-            pt2 = recent_trajectory[i + 1]
-            
-            # Alpha fade per punti più vecchi
-            alpha = (i + 1) / len(recent_trajectory)
-            line_color = tuple(int(c * alpha) for c in color)
-            
-            cv2.line(frame_copy, pt1, pt2, line_color, thickness)
-        
-        # Disegna un cerchio sull'ultimo punto
-        cv2.circle(frame_copy, recent_trajectory[-1], 5, color, -1)
-        
-        return frame_copy
-    
-    @staticmethod
-    def create_split_view(frames: List[np.ndarray],
-                         labels: Optional[List[str]] = None,
-                         layout: str = 'horizontal') -> np.ndarray:
-        """
-        Crea una vista split con più frame affiancati.
-        
-        Args:
-            frames: Lista di frame da affiancare
-            labels: Etichette opzionali per ogni frame
-            layout: 'horizontal' o 'vertical'
-            
-        Returns:
-            Frame combinato
-        """
-        if not frames:
-            return None
-        
-        # Assicurati che tutti i frame abbiano le stesse dimensioni
-        h, w = frames[0].shape[:2]
-        resized_frames = []
-        
-        for frame in frames:
-            if frame.shape[:2] != (h, w):
-                resized = cv2.resize(frame, (w, h))
-            else:
-                resized = frame.copy()
-            
-            resized_frames.append(resized)
-        
-        # Aggiungi etichette se fornite
-        if labels:
-            for i, (frame, label) in enumerate(zip(resized_frames, labels)):
-                cv2.putText(frame, label, (10, 30),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
-        
-        # Combina frame
-        if layout == 'horizontal':
-            combined = np.hstack(resized_frames)
-        else:  # vertical
-            combined = np.vstack(resized_frames)
-        
-        return combined

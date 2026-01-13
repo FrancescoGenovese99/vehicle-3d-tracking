@@ -1,12 +1,13 @@
 """
-Detection module - Rilevamento fari e selezione candidati.
+Detection modules for vehicle features.
 """
 
 from .light_detector import LightDetector
-from .candidate_selector import CandidateSelector, LightCandidate
+from .plate_detector import PlateDetector
+from .candidate_selector import CandidateSelector
 
 __all__ = [
     'LightDetector',
-    'CandidateSelector',
-    'LightCandidate',
+    'PlateDetector',
+    'CandidateSelector'
 ]

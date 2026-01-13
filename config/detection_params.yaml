@@ -66,3 +66,20 @@ debug:
   save_masks: false          # Salva maschere HSV
   save_detection_frames: false  # Salva frames con detection
   verbose: true              # Output verbose
+
+
+# Detection targa (Task 1)
+license_plate_detection:
+  edge_detection:
+    canny_low: 50
+    canny_high: 150
+    blur_kernel: 5
+  
+  contour_filter:
+    min_area: 1000      # Area minima contorno (pixel^2)
+    max_area: 50000     # Area massima
+    aspect_ratio_min: 2.5   # Targa EU ~4.7:1
+    aspect_ratio_max: 6.0
+    min_solidity: 0.7   # Rapporto area/convex_hull
+  
+  epsilon_factor: 0.02  # Per approssimazione poligonale

@@ -41,20 +41,7 @@ venv.bak/
 .vscode/
 
 # Data files
-data/videos/input/*.mp4
-data/videos/input/*.avi
-data/videos/input/*.mov
-data/videos/input/*.MP4
-data/videos/input/*.AVI
-data/videos/input/*.MOV
-data/videos/output/*.mp4
-data/videos/output/*.avi
-data/videos/output/*.mov
-data/results/tracked_points/*.npz
-data/results/poses/*.npz
-data/results/bbox_3d/*.npy
-data/results/*.png
-data/results/*.jpg
+
 
 # Keep directory structure but ignore contents
 !data/videos/input/.gitkeep

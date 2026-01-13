@@ -200,3 +200,22 @@ def load_camera_from_config(config: dict) -> CameraParameters:
         resolution=resolution,
         fps=fps
     )
+
+def load_camera_calibration_simple(calibration_file):
+    """
+    Wrapper function that returns (camera_matrix, dist_coeffs) tuple
+    for compatibility with existing code.
+    
+    Args:
+        calibration_file: Path to calibration file
+        
+    Returns:
+        Tuple (camera_matrix, dist_coeffs)
+    """
+    cam_params = load_camera_calibration(calibration_file)
+    return cam_params.camera_matrix, cam_params.dist_coeffs
+
+# Alias for backward compatibility
+def load_camera_matrices(calibration_file):
+    """Alias for load_camera_calibration_simple"""
+    return load_camera_calibration_simple(calibration_file)
