@@ -23,9 +23,9 @@ hsv_ranges:
 blob_detection:
   min_area: 50               # Area minima blob in pixel
   max_area: 5000             # Area massima blob in pixel
-  min_circularity: 0.4       # Circolarità minima (0-1, cerchio perfetto = 1)
-  min_convexity: 0.7         # Convessità minima
-  min_inertia_ratio: 0.3     # Rapporto inerzia minimo
+  min_circularity: 0.1       # Circolarità minima (0-1, cerchio perfetto = 1)
+  min_convexity: 0.5         # Convessità minima
+  min_inertia_ratio: 0.15     # Rapporto inerzia minimo
 
 # Filtri morfologici
 morphology:
@@ -37,9 +37,9 @@ morphology:
 tail_lights_selection:
   min_horizontal_distance: 50      # Distanza minima tra fari (pixel)
   max_horizontal_distance_ratio: 0.8  # Max distanza / larghezza frame
-  max_vertical_offset: 50          # Disallineamento verticale massimo (pixel)
-  min_area_similarity: 0.5         # Rapporto area minimo tra i due fari
-  min_pair_score: 0.3              # Score minimo per coppia valida
+  max_vertical_offset: 60          # Disallineamento verticale massimo (pixel)
+  min_area_similarity: 0.3         # Rapporto area minimo tra i due fari
+  min_pair_score: 0.25              # Score minimo per coppia valida
 
 # Parametri tracking
 tracking:
@@ -51,6 +51,7 @@ tracking:
 redetection:
   confidence_threshold: 0.6  # Threshold per riattivare detection
   enable_kalman_prediction: true  # Usa Kalman per predire posizione
+  search_region_scale: 2.5  # Scala regione di ricerca attorno al tracker
 
 # Visualizzazione
 visualization:

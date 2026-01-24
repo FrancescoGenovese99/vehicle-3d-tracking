@@ -1,129 +1,105 @@
 """
-Task 2: Vanishing Point Pose Estimation
-
-Estimates vehicle pose using vanishing point calculated from
-tail light trajectories across two consecutive frames.
+Vanishing Point Solver - TYPE-SAFE VERSION
+Geometria proiettiva corretta per Task 2 con gestione robusta dei tipi
 """
 
 import numpy as np
 import cv2
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Union, List
 
 
 class VanishingPointSolver:
     """
-    Solves vehicle pose using vanishing point method.
+    Risolve posa usando vanishing points - VERSIONE TYPE-SAFE.
     
-    Method (as per Task 2 specifications):
-    1. Detect tail lights in frame N: L1', R1'
-    2. Track lights to frame N+1: L2', R2'
-    3. Calculate vanishing point Vx = intersection(L1'L2', R1'R2')
-    4. Convert Vx to 3D motion direction via K⁻¹
-    5. Verify perpendicularity: light_segment ⊥ motion_direction
-    6. Estimate distance to plane π using metric constraint (light distance = 1.40m)
-    7. Reconstruct full pose [R | t]
+    GEOMETRIA CORRETTA:
+    - Vx → direzione segmento luci (ASSE Y veicolo: laterale)
+    - Vy → direzione movimento (ASSE X veicolo: avanti)
+    - Z veicolo → perpendicolare, verso alto
+    
+    GESTIONE TIPI:
+    - Accetta sia tuple che numpy array in input
+    - Converte automaticamente a numpy internamente
     """
     
     def __init__(self, camera_matrix: np.ndarray, vehicle_model: dict):
-        """
-        Initialize solver.
-        
-        Args:
-            camera_matrix: Camera intrinsic matrix K (3x3)
-            vehicle_model: Dictionary with vehicle geometry
-        """
         self.K = camera_matrix
         self.K_inv = np.linalg.inv(camera_matrix)
         
-        # Extract vehicle parameters
-        self.tail_lights_3d = np.array([
-            vehicle_model['vehicle']['tail_lights']['left'],
-            vehicle_model['vehicle']['tail_lights']['right']
-        ], dtype=np.float32)
-        
-        self.lights_distance_real = vehicle_model['vehicle']['tail_lights']['distance_between']
-        
-        # Camera parameters
         self.fx = camera_matrix[0, 0]
         self.fy = camera_matrix[1, 1]
         self.cx = camera_matrix[0, 2]
         self.cy = camera_matrix[1, 2]
         
-    def calculate_vanishing_point(
-        self,
-        lights_prev: np.ndarray,
-        lights_curr: np.ndarray,
-        tolerance: float = 10.0
-    ) -> Optional[np.ndarray]:
-        """
-        Calculate vanishing point from light trajectories.
+        vehicle_data = vehicle_model.get('vehicle', {})
+        tail_lights = vehicle_data.get('tail_lights', {})
         
-        Args:
-            lights_prev: Previous frame lights [[x1,y1], [x2,y2]] (2x2)
-            lights_curr: Current frame lights [[x1,y1], [x2,y2]] (2x2)
-            tolerance: Max pixel distance for valid intersection
-            
-        Returns:
-            Vanishing point [u, v] or None if invalid
-        """
-        # Extract left and right light positions
-        L1 = lights_prev[0]  # Left light frame N
-        R1 = lights_prev[1]  # Right light frame N
-        L2 = lights_curr[0]  # Left light frame N+1
-        R2 = lights_curr[1]  # Right light frame N+1
+        self.lights_distance_real = tail_lights.get('distance_between', 1.40)
         
-        # Line 1: through L1 and L2
-        # Line 2: through R1 and R2
+        left_light = tail_lights.get('left', [-0.27, 0.70, 0.50])
+        right_light = tail_lights.get('right', [-0.27, -0.70, 0.50])
         
-        # Calculate vanishing point as intersection
-        vp = self._line_intersection(L1, L2, R1, R2)
+        self.lights_height = left_light[2]
+        self.lights_x_offset = left_light[0]
         
-        if vp is None:
-            return None
+        self.tail_lights_3d = np.array([left_light, right_light], dtype=np.float32)
         
-        # Validate: check if intersection is reasonable
-        # (not too close to image borders, not at infinity)
-        u, v = vp
+        self.perpendicularity_threshold = 0.45
         
-        # Check if point is within reasonable bounds (extended image area)
-        img_width = 2 * self.cx
-        img_height = 2 * self.cy
-        
-        if abs(u) > img_width * 3 or abs(v) > img_height * 3:
-            # Vanishing point too far (nearly parallel lines)
-            return None
-        
-        return vp
+        print(f"[VP Solver] Distance={self.lights_distance_real}m, Height={self.lights_height}m")
+        print(f"[VP Solver] Perpendicularity threshold = {self.perpendicularity_threshold}")
     
-    def _line_intersection(
+    def _ensure_numpy_array(
         self,
-        p1: np.ndarray,
-        p2: np.ndarray,
-        p3: np.ndarray,
-        p4: np.ndarray
-    ) -> Optional[np.ndarray]:
-        """
-        Calculate intersection of two lines.
+        data: Union[Tuple, List, np.ndarray],
+        shape: Tuple[int, int]
+    ) -> np.ndarray:
+        """Converte input a numpy array con shape specificato."""
+        if isinstance(data, (tuple, list)):
+            arr = np.array(data, dtype=np.float32)
+        elif isinstance(data, np.ndarray):
+            arr = data.astype(np.float32)
+        else:
+            raise TypeError(f"Tipo non supportato: {type(data)}")
         
-        Line 1: through p1 and p2
-        Line 2: through p3 and p4
+        if arr.shape != shape:
+            arr = arr.reshape(shape)
         
-        Returns:
-            Intersection point [x, y] or None if parallel
-        """
+        return arr
+    
+    def calculate_vanishing_points(
+        self,
+        lights_frame1: Union[Tuple, np.ndarray],
+        lights_frame2: Union[Tuple, np.ndarray]
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+        """Calcola Vx e Vy."""
+        lights1 = self._ensure_numpy_array(lights_frame1, (2, 2))
+        lights2 = self._ensure_numpy_array(lights_frame2, (2, 2))
+        
+        L1, R1 = lights1[0], lights1[1]
+        L2, R2 = lights2[0], lights2[1]
+        
+        Vx = self._line_intersection(L1, R1, L2, R2)
+        Vy = self._line_intersection(L1, L2, R1, R2)
+        
+        if Vx is not None and not self._is_point_valid(Vx):
+            Vx = None
+        if Vy is not None and not self._is_point_valid(Vy):
+            Vy = None
+        
+        return Vx, Vy
+    
+    def _line_intersection(self, p1, p2, p3, p4) -> Optional[np.ndarray]:
+        """Intersezione rette."""
         x1, y1 = p1
         x2, y2 = p2
         x3, y3 = p3
         x4, y4 = p4
         
-        # Calculate denominator
         denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-        
         if abs(denom) < 1e-6:
-            # Lines are parallel
             return None
         
-        # Calculate intersection
         t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
         
         x = x1 + t * (x2 - x1)
@@ -131,254 +107,162 @@ class VanishingPointSolver:
         
         return np.array([x, y], dtype=np.float32)
     
-    def vanishing_point_to_3d_direction(self, vp: np.ndarray) -> np.ndarray:
-        """
-        Convert vanishing point to 3D motion direction.
-        
-        Args:
-            vp: Vanishing point [u, v] in pixels
-            
-        Returns:
-            Normalized 3D direction vector
-        """
-        # Convert pixel coordinates to normalized image coordinates
-        u, v = vp
-        
-        # Create homogeneous pixel coordinates
-        pixel_homog = np.array([u, v, 1.0])
-        
-        # Convert to 3D direction: d = K⁻¹ · [u, v, 1]ᵀ
-        direction_3d = self.K_inv @ pixel_homog
-        
-        # Normalize
-        direction_normalized = direction_3d / np.linalg.norm(direction_3d)
-        
-        return direction_normalized
+    def _is_point_valid(self, point: np.ndarray, max_dist: float = 10000.0) -> bool:
+        """Valida punto."""
+        if not np.isfinite(point).all():
+            return False
+        return np.linalg.norm(point) < max_dist
     
-    def verify_perpendicularity(
+    def check_perpendicularity(
         self,
-        lights_curr: np.ndarray,
-        motion_direction_3d: np.ndarray,
-        threshold: float = 0.3
-    ) -> bool:
-        """
-        Verify that light segment is perpendicular to motion direction.
+        Vx: np.ndarray,
+        Vy: np.ndarray,
+        threshold: Optional[float] = None
+    ) -> Tuple[bool, float]:
+        """Check K⁻¹Vx ⊥ K⁻¹Vy."""
+        if threshold is None:
+            threshold = self.perpendicularity_threshold
         
-        Args:
-            lights_curr: Current frame lights [[x1,y1], [x2,y2]]
-            motion_direction_3d: 3D motion direction vector
-            threshold: Max absolute dot product for perpendicularity
-            
-        Returns:
-            True if perpendicular (translational motion confirmed)
-        """
-        # Calculate light segment in image
-        light_segment_2d = lights_curr[1] - lights_curr[0]  # R - L
+        dir_Vx = self.K_inv @ np.append(Vx, 1.0)
+        dir_Vy = self.K_inv @ np.append(Vy, 1.0)
         
-        # Convert to 3D direction (approximate)
-        # We use the direction in image plane
-        segment_3d_homog = np.array([light_segment_2d[0], light_segment_2d[1], 0.0])
-        segment_3d = self.K_inv @ np.append(segment_3d_homog[:2], 1.0)
-        segment_3d_norm = segment_3d / np.linalg.norm(segment_3d)
+        dir_Vx /= np.linalg.norm(dir_Vx)
+        dir_Vy /= np.linalg.norm(dir_Vy)
         
-        # Calculate dot product
-        dot_product = np.abs(np.dot(segment_3d_norm, motion_direction_3d))
-        
-        # Should be close to 0 for perpendicularity
-        is_perpendicular = dot_product < threshold
-        
-        return is_perpendicular
+        dot = abs(np.dot(dir_Vx, dir_Vy))
+        return dot < threshold, dot
     
-    def estimate_distance_to_plane(
+    def compute_plane_pi(self, Vx, Vy) -> np.ndarray:
+        """Calcola normale piano π."""
+        Vx_homog = np.append(Vx, 1.0)
+        Vy_homog = np.append(Vy, 1.0)
+        
+        l = np.cross(Vx_homog, Vy_homog)
+        n_pi = self.K.T @ l
+        
+        return n_pi / np.linalg.norm(n_pi)
+    
+    def localize_light_segment_3d(
         self,
-        lights_curr: np.ndarray
-    ) -> float:
-        """
-        Estimate distance to the plane π containing the lights.
+        lights_frame2: Union[Tuple, np.ndarray],
+        Vx: np.ndarray,
+        n_pi: np.ndarray
+    ) -> Tuple[np.ndarray, float]:
+        """Localizza centro luci 3D."""
+        lights2 = self._ensure_numpy_array(lights_frame2, (2, 2))
         
-        Uses the metric constraint: real distance between lights = 1.40m
+        center_2d = np.mean(lights2, axis=0)
+        center_norm = self.K_inv @ np.append(center_2d, 1.0)
         
-        Args:
-            lights_curr: Current frame lights [[x1,y1], [x2,y2]]
-            
-        Returns:
-            Estimated distance Z in meters
-        """
-        # Calculate pixel distance between lights
-        light_distance_pixels = np.linalg.norm(lights_curr[1] - lights_curr[0])
+        pixel_dist = np.linalg.norm(lights2[1] - lights2[0])
+        if pixel_dist < 1.0:
+            return center_norm * 10.0, 10.0
         
-        # Use perspective projection relation:
-        # pixel_distance = (focal_length * real_distance) / depth
-        # => depth = (focal_length * real_distance) / pixel_distance
-        
-        # Use average focal length
         f_avg = (self.fx + self.fy) / 2.0
+        Z = (self.lights_distance_real * f_avg) / pixel_dist
         
-        # Calculate depth
-        Z = (f_avg * self.lights_distance_real) / light_distance_pixels
-        
-        return Z
+        center_3d = center_norm * Z
+        return center_3d, Z
     
-    def reconstruct_pose(
+    def reconstruct_pose_from_plane(
         self,
-        lights_curr: np.ndarray,
-        motion_direction_3d: np.ndarray,
+        lights_frame2: Union[Tuple, np.ndarray],
+        Vx: np.ndarray,
+        Vy: np.ndarray,
+        center_3d: np.ndarray,
         distance: float
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Reconstruct full vehicle pose [R | t].
+        Ricostruzione posa CORRETTA.
         
-        Args:
-            lights_curr: Current frame lights [[x1,y1], [x2,y2]]
-            motion_direction_3d: 3D motion direction (forward axis)
-            distance: Estimated distance to vehicle
-            
-        Returns:
-            (rvec, tvec, R) tuple
+        - Vx → ASSE Y veicolo
+        - Vy → ASSE X veicolo
+        - Z → X × Y
         """
-        # Calculate vehicle center in 3D (midpoint of lights)
-        light_center_2d = np.mean(lights_curr, axis=0)
+        lights2 = self._ensure_numpy_array(lights_frame2, (2, 2))
         
-        # Back-project light center to 3D at estimated distance
-        # Convert pixel to normalized coordinates
-        light_center_norm = self.K_inv @ np.array([light_center_2d[0], 
-                                                     light_center_2d[1], 
-                                                     1.0])
-        light_center_norm = light_center_norm / light_center_norm[2]
+        dir_Vx_cam = self.K_inv @ np.append(Vx, 1.0)
+        dir_Vx_cam /= np.linalg.norm(dir_Vx_cam)
         
-        # Scale by distance to get 3D position
-        # Position in camera frame
-        X = light_center_norm[0] * distance
-        Y = light_center_norm[1] * distance
-        Z = distance
+        dir_Vy_cam = self.K_inv @ np.append(Vy, 1.0)
+        dir_Vy_cam /= np.linalg.norm(dir_Vy_cam)
         
-        tvec = np.array([[X], [Y], [Z]], dtype=np.float32)
+        X_veh_in_cam = dir_Vy_cam
         
-        # Construct rotation matrix
-        # Assume vehicle's forward direction aligns with motion direction
-        # and use known geometry
+        L2, R2 = lights2[0], lights2[1]
+        L2_ray = self.K_inv @ np.append(L2, 1.0)
+        R2_ray = self.K_inv @ np.append(R2, 1.0)
         
-        # Forward axis (Z-axis of vehicle) = motion direction
-        z_axis = motion_direction_3d
+        segment = L2_ray - R2_ray
+        Y_veh_in_cam = segment / np.linalg.norm(segment)
         
-        # Calculate vehicle's right axis (X-axis) from light positions
-        # Direction from left to right light
-        light_direction_2d = lights_curr[1] - lights_curr[0]
-        light_direction_3d = self.K_inv @ np.array([light_direction_2d[0],
-                                                      light_direction_2d[1],
-                                                      0.0])
-        x_axis = light_direction_3d / np.linalg.norm(light_direction_3d)
+        Z_veh_in_cam = np.cross(X_veh_in_cam, Y_veh_in_cam)
+        Z_veh_in_cam /= np.linalg.norm(Z_veh_in_cam)
         
-        # Up axis (Y-axis) = cross product
-        y_axis = np.cross(z_axis, x_axis)
-        y_axis = y_axis / np.linalg.norm(y_axis)
+        if Z_veh_in_cam[1] > 0:
+            Z_veh_in_cam = -Z_veh_in_cam
         
-        # Recompute x_axis to ensure orthogonality
-        x_axis = np.cross(y_axis, z_axis)
-        x_axis = x_axis / np.linalg.norm(x_axis)
+        Y_veh_in_cam = np.cross(Z_veh_in_cam, X_veh_in_cam)
+        Y_veh_in_cam /= np.linalg.norm(Y_veh_in_cam)
         
-        # Build rotation matrix
-        R = np.column_stack([x_axis, y_axis, z_axis])
+        R = np.column_stack([X_veh_in_cam, Y_veh_in_cam, Z_veh_in_cam])
         
-        # Convert to rvec
+        if np.linalg.det(R) < 0:
+            R[:, 2] *= -1
+        
+        offset_veh = np.array([self.lights_x_offset, 0.0, self.lights_height])
+        offset_cam = R @ offset_veh
+        
+        origin_cam = center_3d - offset_cam
+        
+        tvec = origin_cam.reshape(3, 1).astype(np.float32)
         rvec, _ = cv2.Rodrigues(R)
         
         return rvec, tvec, R
     
-    def classify_motion_type(
-        self,
-        lights_curr: np.ndarray,
-        motion_direction_3d: np.ndarray,
-        dot_threshold: float = 0.2
-    ) -> str:
-        """
-        Classify vehicle motion as TRANSLATION or ROTATION.
-        
-        Args:
-            lights_curr: Current frame lights
-            motion_direction_3d: 3D motion direction from vanishing point
-            dot_threshold: Threshold for perpendicularity check
-            
-        Returns:
-            'TRANSLATION' if pure translational motion
-            'ROTATION' if turning/rotating motion
-        """
-        # Calculate light segment in image
-        light_segment_2d = lights_curr[1] - lights_curr[0]
-        
-        # Convert to 3D direction
-        segment_3d = self.K_inv @ np.append(light_segment_2d, 1.0)
-        segment_3d_norm = segment_3d / np.linalg.norm(segment_3d)
-        
-        # Calculate dot product
-        dot_product = np.abs(np.dot(segment_3d_norm, motion_direction_3d))
-        
-        # If perpendicular → TRANSLATION
-        # If parallel → ROTATION
-        if dot_product < dot_threshold:
-            return "TRANSLATION"
-        else:
-            return "ROTATION"
-    
     def estimate_pose(
         self,
-        lights_prev: np.ndarray,
-        lights_curr: np.ndarray,
+        lights_frame1: Union[Tuple, np.ndarray],
+        lights_frame2: Union[Tuple, np.ndarray],
         frame_idx: int = 0
     ) -> Optional[Dict]:
-        """
-        Full pose estimation pipeline.
-        
-        Args:
-            lights_prev: Previous frame lights (2x2)
-            lights_curr: Current frame lights (2x2)
-            frame_idx: Current frame index (for logging)
-            
-        Returns:
-            Dictionary with pose data or None if estimation failed
-            {
-                'rvec': rotation vector (3x1),
-                'tvec': translation vector (3x1),
-                'R': rotation matrix (3x3),
-                'vanishing_point': [u,v] or None,
-                'distance': float,
-                'motion_type': 'TRANSLATION' or 'ROTATION',
-                'is_valid': bool
-            }
-        """
-        # Step 1: Calculate vanishing point
-        vp = self.calculate_vanishing_point(lights_prev, lights_curr)
-        
-        if vp is None:
-            # Parallel motion or tracking error
+        """Pipeline completa."""
+        Vx, Vy = self.calculate_vanishing_points(lights_frame1, lights_frame2)
+        if Vx is None or Vy is None:
             return None
         
-        # Step 2: Convert to 3D motion direction
-        motion_direction = self.vanishing_point_to_3d_direction(vp)
+        is_perp, dot = self.check_perpendicularity(Vx, Vy)
+        motion_type = "TRANSLATION" if is_perp else "ROTATION"
         
-        # Step 3: Classify motion type (TRANSLATION vs ROTATION)
-        motion_type = self.classify_motion_type(lights_curr, motion_direction)
+        n_pi = self.compute_plane_pi(Vx, Vy)
+        center_3d, dist = self.localize_light_segment_3d(lights_frame2, Vx, n_pi)
         
-        # Step 4: Verify perpendicularity (translational motion)
-        is_perpendicular = self.verify_perpendicularity(lights_curr, motion_direction)
-        
-        if not is_perpendicular and motion_type == "TRANSLATION":
-            # Inconsistent: classified as translation but not perpendicular
-            motion_type = "ROTATION"
-        
-        # Step 5: Estimate distance
-        distance = self.estimate_distance_to_plane(lights_curr)
-        
-        # Step 6: Reconstruct pose
-        rvec, tvec, R = self.reconstruct_pose(lights_curr, motion_direction, distance)
+        rvec, tvec, R = self.reconstruct_pose_from_plane(
+            lights_frame2, Vx, Vy, center_3d, dist
+        )
         
         return {
             'rvec': rvec,
             'tvec': tvec,
             'R': R,
-            'vanishing_point': vp,
-            'distance': distance,
+            'Vx': Vx,
+            'Vy': Vy,
+            'n_pi': n_pi,
+            'center_3d': center_3d,
+            'distance': np.linalg.norm(tvec),
             'motion_type': motion_type,
-            'is_valid': is_perpendicular,
+            'is_perpendicular': is_perp,
+            'dot_product': dot,
+            'is_valid': True,
             'frame': frame_idx
         }
+    
+    def classify_motion_type(
+        self,
+        Vx,
+        Vy,
+        threshold: Optional[float] = None
+    ) -> str:
+        """Classifica tipo movimento."""
+        is_perp, _ = self.check_perpendicularity(Vx, Vy, threshold)
+        return "TRANSLATION" if is_perp else "ROTATION"

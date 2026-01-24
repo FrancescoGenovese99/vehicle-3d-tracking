@@ -1,6 +1,8 @@
 # Modello 3D del veicolo: Toyota Aygo X 2024
-# Sistema di riferimento: centro ruote posteriori a livello suolo, asse con targa
-# Dati da specifiche ufficiali Toyota e stime basate su proporzioni standard
+# Sistema di riferimento: centro ruote posteriori a livello suolo
+# X: avanti (positivo verso fronte)
+# Y: sinistra (positivo)
+# Z: su (positivo)
 
 vehicle:
   # Identificazione veicolo
@@ -10,130 +12,98 @@ vehicle:
   
   # Dimensioni totali in metri (da specifiche ufficiali Toyota)
   dimensions:
-    length: 3.70      # 3700 mm - Lunghezza totale
-    width: 1.74       # 1740 mm - Larghezza senza specchietti
-    width_with_mirrors: 1.96  # ~1960 mm - Stima con specchietti
-    height: 1.525     # 1525 mm - Altezza totale
-    wheelbase: 2.43   # 2430 mm - Passo
-    front_overhang: 0.73   # 730 mm - Sbalzo anteriore
-    rear_overhang: 0.54    # 540 mm - Sbalzo posteriore
-    ground_clearance: 0.132  # ~132 mm - Altezza da terra (11mm più del normale Aygo)
+    length: 3.70      # Lunghezza totale
+    width: 1.74       # Larghezza senza specchietti
+    width_with_mirrors: 1.96
+    height: 1.525     # Altezza totale
+    wheelbase: 2.43   # Passo
+    front_overhang: 0.73   # Sbalzo anteriore
+    rear_overhang: 0.54    # Sbalzo posteriore
+    ground_clearance: 0.132
 
   # Sistema di riferimento
   reference_frame:
     origin: "centro asse ruote posteriori a livello suolo"
-    description: "Asse X = avanti (positivo verso fronte), Y = sinistra (positivo), Z = altezza (positivo verso l'alto)"
-    notes: "Origine a 0.54m dalla fine posteriore del veicolo (rear overhang)"
+    description: "X = avanti (+), Y = sinistra (+), Z = su (+)"
+    notes: "Targa posteriore a X = -rear_overhang/2 = -0.27m"
     
   # Coordinate 3D dei fari posteriori [x, y, z] in metri
-  # Stimate in base alle proporzioni tipiche e foto del veicolo
+  # X: metà sbalzo posteriore = -0.27m
+  # Y: ±0.70m (distanza dal centro, totale 1.40m tra fari)
+  # Z: 0.50m (altezza da terra)
   tail_lights:
-    # Fari posizionati sul bordo posteriore, ai lati
-    # X: sbalzo posteriore è 0.54m, fari circa a metà = -0.27m dall'origine
-    # Y: distanza stimata dal centro basata su larghezza totale 1.74m
-    # Z: altezza stimata a circa 1/3 dell'altezza totale del veicolo
     left: [-0.27, 0.70, 0.50]    # Faro posteriore sinistro
     right: [-0.27, -0.70, 0.50]   # Faro posteriore destro
-    
-    # Informazioni aggiuntive sui fari
-    style: "LED verticali integrati nel paraurti"
     distance_between: 1.40  # Distanza orizzontale tra i fari (metri)
+    height_from_ground: 0.50
+    style: "LED verticali integrati nel paraurti"
     
-  # Coordinate 3D dei fari anteriori (opzionali per tracking frontale)
+  # Coordinate 3D dei fari anteriori (opzionali)
   front_lights:
-    # X: lunghezza - sbalzo anteriore = 3.70 - 0.73 = 2.97m
-    left: [2.97, 0.65, 0.65]     # Faro anteriore sinistro
-    right: [2.97, -0.65, 0.65]    # Faro anteriore destro
+    left: [2.97, 0.65, 0.65]
+    right: [2.97, -0.65, 0.65]
     style: "LED con DRL"
   
-  # Targa posteriore
-  license_plate_rear:
-    center: [0.0, 0.0, 0.40]    # Centro della targa posteriore
-    width: 0.52                  # Larghezza targa standard EU (520mm)
-    height: 0.11                 # Altezza targa standard EU (110mm)
-    mounting: "centro portellone posteriore"
-
-  # Targa posteriore - 4 ANGOLI 3D
-  license_plate_rear_corners:
-    # Dimensioni targa EU standard: 52cm x 11cm
-    # Centro: [0.0, 0.0, 0.4]
-    top_left: [0.0, 0.26, 0.455]      # TL
-    top_right: [0.0, -0.26, 0.455]     # TR
-    bottom_left: [0.0, 0.26, 0.345]    # BL
-    bottom_right: [0.0, -0.26, 0.345]  # BR
+  # TARGA POSTERIORE - Coordinate 3D unificate
+  # Centro targa a metà sbalzo posteriore, altezza 0.40m
+  # Targa EU standard: 52cm x 11cm
+  license_plate:
+    # Centro targa
+    center: [-0.27, 0.0, 0.40]
     
-  # Targa anteriore
+    # Dimensioni
+    width: 0.52    # 520mm
+    height: 0.11   # 110mm
+    
+    # 4 angoli 3D (ordine: TL, TR, BR, BL)
+    corners:
+      top_left: [-0.27, 0.26, 0.455]      # X, Y, Z
+      top_right: [-0.27, -0.26, 0.455]
+      bottom_right: [-0.27, -0.26, 0.345]
+      bottom_left: [-0.27, 0.26, 0.345]
+    
+    mounting: "centro portellone posteriore"
+  
+  # Targa anteriore (opzionale)
   license_plate_front:
-    center: [3.70, 0.0, 0.40]    # Centro della targa anteriore
+    center: [3.70, 0.0, 0.40]
     width: 0.52
     height: 0.11
-    mounting: "centro paraurti anteriore"
 
   # Vertici bounding box 3D
-  # Auto-generati in base alle dimensioni, ma puoi definirli manualmente
+  # 8 vertici: 4 base (z=0) + 4 top (z=height)
+  # Ordine: posteriore-destra, posteriore-sinistra, frontale-sinistra, frontale-destra
   bbox_vertices:
-    auto_generate: true
-    # Se false, definisci manualmente gli 8 vertici della bbox:
-    # Ordine: 4 vertici base (z=0) + 4 vertici top (z=height)
-    # Format: [x, y, z] per ciascun vertice
-    manual_vertices:
-      # Base (z=0, a livello suolo)
-      bottom_rear_left: [0.0, 0.87, 0.0]
-      bottom_rear_right: [0.0, -0.87, 0.0]
-      bottom_front_left: [3.70, 0.87, 0.0]
-      bottom_front_right: [3.70, -0.87, 0.0]
-      # Top (z=height)
-      top_rear_left: [0.0, 0.87, 1.525]
-      top_rear_right: [0.0, -0.87, 1.525]
-      top_front_left: [3.70, 0.87, 1.525]
-      top_front_right: [3.70, -0.87, 1.525]
-
-  # Informazioni aggiuntive sul veicolo (per reference)
-  additional_info:
-    segment: "A-segment / City SUV"
-    doors: 5
-    seats: 4
-    curb_weight: 940  # kg (peso a vuoto minimo)
-    fuel_tank: 35     # litri
-    boot_capacity: 231  # litri (sedili su)
-    turning_circle: 9.4  # metri
-    drag_coefficient: 0.32
+    # Base (z=0, a livello suolo)
+    # Posteriore inizia a X=0 (centro ruote posteriori)
+    # Frontale termina a X=length
+    bottom_rear_right: [0.0, -0.87, 0.0]     # 0
+    bottom_rear_left: [0.0, 0.87, 0.0]       # 1
+    bottom_front_left: [3.70, 0.87, 0.0]     # 2
+    bottom_front_right: [3.70, -0.87, 0.0]   # 3
     
-  # Punti di riferimento aggiuntivi (opzionali per tracking avanzato)
+    # Top (z=height)
+    top_rear_right: [0.0, -0.87, 1.525]      # 4
+    top_rear_left: [0.0, 0.87, 1.525]        # 5
+    top_front_left: [3.70, 0.87, 1.525]      # 6
+    top_front_right: [3.70, -0.87, 1.525]    # 7
+
+  # Punti di riferimento aggiuntivi
   additional_reference_points:
     # Specchietti retrovisori esterni
     left_mirror: [1.50, 0.98, 1.10]
     right_mirror: [1.50, -0.98, 1.10]
     
-    # Angoli del tetto (per ricostruzione forma)
-    roof_rear_left: [0.54, 0.70, 1.525]
-    roof_rear_right: [0.54, -0.70, 1.525]
-    roof_front_left: [2.50, 0.70, 1.525]
-    roof_front_right: [2.50, -0.70, 1.525]
-    
     # Centro geometrico del veicolo
     geometric_center: [1.85, 0.0, 0.76]
     
-    # Baricentro stimato (più basso e spostato avanti)
+    # Baricentro stimato
     center_of_gravity: [1.75, 0.0, 0.50]
 
-# Note di utilizzo:
-# - Tutte le misure sono in METRI
-# - Sistema di coordinate: origine al centro asse posteriore a suolo
-# - X positivo = avanti, Y positivo = sinistra, Z positivo = su
-# - Le coordinate dei fari sono STIME basate su proporzioni standard
-# - Per massima precisione, misura fisicamente la posizione dei fari sul tuo veicolo
-# - Le distanze tra i fari sono cruciali per la stima della posa 3D accurata
-# - Verifica che le coordinate siano coerenti con il tuo sistema di riferimento
-
-
-# Coordinate 3D targa posteriore (Task 1)
-  license_plate:
-    corners:
-      top_left: [-0.30, 0.26, 0.455]      # [X, Y, Z] metri
-      top_right: [-0.30, -0.26, 0.455]
-      bottom_right: [-0.30, -0.26, 0.345]
-      bottom_left: [-0.30, 0.26, 0.345]
-    width: 0.52    # Larghezza targa (metri) - EU plate 520mm
-    height: 0.11   # Altezza targa (metri) - EU plate 110mm
-    center: [-0.30, 0.0, 0.40]  # Centro targa
+# Note importanti:
+# - Tutte le coordinate sono in METRI
+# - Sistema destrorso: X avanti, Y sinistra, Z su
+# - Origine: centro asse ruote posteriori a suolo
+# - Targa posteriore a X=-0.27m (metà dello sbalzo posteriore di 0.54m)
+# - Fari posteriori alla stessa X della targa
+# - Distanza tra fari: 1.40m (simmetrica rispetto all'asse Y)
