@@ -1,77 +1,88 @@
 """
-Advanced Detector - ADAPTIVE VERSION with CANNY EDGE DETECTION
-Sistema adattivo senza vincoli posizionali, ottimizzato per fari rossi saturi
+Advanced Detector - FIX PLATE JUMP & ADAPTIVE THRESHOLD
 
-STRATEGIA:
-1. Detection HSV: rosso saturo + alta luminosità (cattura fari anche "quasi bianchi")
-2. Nessun vincolo posizionale (funziona ovunque nel frame)
-3. Anchor points su EDGE LATERALI a metà altezza del faro
-4. Canny edge detection per trovare bordo preciso faro/riflesso
+CORREZIONI:
+1. Threshold adaptive basato su velocità movimento
+2. Gestione graceful quando detection fallisce
+3. Smoothing posizione targa
+4. Validazione geometrica più robusta
 """
 
 import cv2
 import numpy as np
 from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass
+from scipy import stats
+from collections import deque
 
 
 @dataclass
 class VehicleKeypoints:
-    """Punti chiave rilevati del veicolo."""
-    tail_lights: np.ndarray  # Shape (2, 2): [[left_x, left_y], [right_x, right_y]]
+    """Punti chiave rilevati del veicolo - MULTI-FEATURE."""
+    tail_lights_features: Dict[str, np.ndarray]
     plate_corners: Optional[Dict[str, Tuple[int, int]]]
+    plate_bottom: Optional[np.ndarray]
     plate_center: Tuple[int, int]
     confidence: float
-    templates: Optional[List[np.ndarray]] = None
+    templates: Optional[Dict[str, List[np.ndarray]]] = None
 
 
 class AdvancedDetector:
     """
-    Detector ADATTIVO con edge detection precisa.
-    
-    INNOVAZIONI:
-    - Nessun vincolo su posizione Y (funziona ovunque nel frame)
-    - Detection basata su colore ROSSO + luminosità ALTA
-    - Anchor points su EDGE LATERALI (canny-refined)
-    - Altezza ADATTIVA (mid-point tra 1/4 e 3/4 del faro)
+    Detector MULTI-FEATURE con ADAPTIVE THRESHOLD per targa.
     """
     
     def __init__(self, config: Dict = None):
-        """Inizializza detector."""
-        # ===== PARAMETRI HSV ROSSO (OTTIMIZZATI) =====
-        # Range per rosso SATURO (anche quando sembra bianco per saturazione)
+        # ===== PARAMETRI HSV ROSSO (FARI) =====
         self.red_h_lower1 = 0
         self.red_h_upper1 = 10
         self.red_h_lower2 = 170
         self.red_h_upper2 = 180
         
-        # Saturazione: PERMISSIVA (anche bassa saturazione = quasi bianco)
-        self.red_s_lower = 100  # Molto permissivo
+        self.red_s_lower = 100
         self.red_s_upper = 255
         
-        # Valore: ALTA luminosità (fari molto luminosi)
-        self.red_v_lower = 180  # Molto luminoso
-        self.red_v_upper = 200
+        self.red_v_lower = 210
+        self.red_v_upper = 255
         
         # ===== PARAMETRI BLOB DETECTION =====
-        self.min_contour_area = 150  # Pixel² (permissivo per fari lontani)
-        self.max_contour_area = 8000  # Pixel² (permissivo per fari vicini)
-        self.min_vertical_ratio = 1.2  # h/w > 1.2 (fari verticali)
+        self.min_contour_area_ratio = 0.00015
+        self.max_contour_area_ratio = 0.01
+        self.min_vertical_ratio = 1.2
+        self.max_y_ratio = 0.80
+        
+        # ===== PARAMETRI FEATURE EXTRACTION =====
+        self.mid_height_min = 0.30
+        self.mid_height_max = 0.70
         
         # ===== PARAMETRI CANNY =====
         self.canny_low = 50
         self.canny_high = 150
         
-        # ===== PARAMETRI ANCHOR POINT =====
-        self.mid_height_min = 0.25  # 1/4 dell'altezza
-        self.mid_height_max = 0.75  # 3/4 dell'altezza
+        # Template
+        self.template_size = 35
         
-        # Template extraction
-        self.template_size = 35  # Template grande per catturare edge
-        
-        # Parametri targa (invariati)
+        # ===== PARAMETRI TARGA =====
         self.v_plate_low = 150
         self.v_plate_high = 240
+        
+        # ===== STABILITÀ TEMPORALE ADAPTIVE =====
+        self.prev_plate_bottom = None
+        self.prev_plate_corners = None
+        
+        # ===== FIX: ADAPTIVE THRESHOLD =====
+        self.base_max_jump_pixels = 80
+        self.max_jump_pixels = self.base_max_jump_pixels
+        self.plate_detection_count = 0
+        self.warmup_frames = 10
+        
+        # ===== NUOVO: VELOCITY ESTIMATION =====
+        self.plate_center_history = deque(maxlen=5)  # Ultimi 5 centri
+        self.plate_velocity = np.array([0.0, 0.0])   # Velocità stimata (px/frame)
+        
+        # ===== NUOVO: CONFIDENCE TRACKING =====
+        self.detection_confidence = 1.0
+        self.min_confidence = 0.3
         
         # Override con config
         if config:
@@ -79,223 +90,193 @@ class AdvancedDetector:
             self.v_plate_low = config.get('v_plate_low', self.v_plate_low)
             self.v_plate_high = config.get('v_plate_high', self.v_plate_high)
         
-        print("🔍 AdvancedDetector ADAPTIVE initialized:")
-        print(f"  HSV Red: H=[{self.red_h_lower1}-{self.red_h_upper1}, {self.red_h_lower2}-{self.red_h_upper2}], S>={self.red_s_lower}, V>={self.red_v_lower}")
-        print(f"  Area: {self.min_contour_area}-{self.max_contour_area}px²")
-        print(f"  Anchor: mid-height [{self.mid_height_min}-{self.mid_height_max}]")
+        print("🔍 AdvancedDetector MULTI-FEATURE initialized (ADAPTIVE):")
+        print(f"  HSV Red: V>={self.red_v_lower}")
+        print(f"  Plate: BLOB + RANSAC (V={self.v_plate_low}-{self.v_plate_high})")
+        print(f"  Threshold: ADAPTIVE (base={self.base_max_jump_pixels}px)")
+        print(f"  Velocity estimation: ENABLED")
     
     def _create_red_mask(self, frame: np.ndarray) -> np.ndarray:
-        """
-        Crea maschera per fari rossi SATURI + alta luminosità.
-        
-        Cattura:
-        - Rosso puro
-        - Rosso saturo che appare quasi bianco
-        - Fari molto luminosi di notte
-        """
+        """Crea maschera fari rossi."""
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        
-        # Range rosso (split HSV: 0-10 e 170-180)
-        lower1 = np.array([self.red_h_lower1, self.red_s_lower, self.red_v_lower])
-        upper1 = np.array([self.red_h_upper1, self.red_s_upper, self.red_v_upper])
-        
-        lower2 = np.array([self.red_h_lower2, self.red_s_lower, self.red_v_lower])
-        upper2 = np.array([self.red_h_upper2, self.red_s_upper, self.red_v_upper])
-        
-        mask1 = cv2.inRange(hsv, lower1, upper1)
-        mask2 = cv2.inRange(hsv, lower2, upper2)
-        
-        # Combina maschere
-        mask = cv2.bitwise_or(mask1, mask2)
-        
+        V = hsv[:, :, 2]
+        mask = cv2.inRange(V, self.red_v_lower, 255)
         return mask
     
-    def _find_edge_point_with_canny(
+    def _extract_outer_point_with_canny(
         self,
-        frame_gray: np.ndarray,
+        frame: np.ndarray,
         contour: np.ndarray,
-        target_y: int,
-        search_direction: str
-    ) -> Optional[Tuple[int, int]]:
-        """
-        Trova edge preciso del faro usando Canny edge detection.
-        MIGLIORATO: Filtra solo edge VERTICALI per evitare bordi inferiori.
-        """
-        # Bounding box del contorno
-        x, y, w, h = cv2.boundingRect(contour)
+        bbox: Tuple[int, int, int, int],
+        is_left: bool
+    ) -> Tuple[int, int]:
+        """Estrae punto OUTER usando Canny."""
+        x, y, w, h = bbox
         
-        # ROI attorno al contorno (con padding)
-        padding = 10
-        x1 = max(0, x - padding)
-        y1 = max(0, y - padding)
-        x2 = min(frame_gray.shape[1], x + w + padding)
-        y2 = min(frame_gray.shape[0], y + h + padding)
+        pad = 5
+        x1 = max(0, x - pad)
+        y1 = max(0, y - pad)
+        x2 = min(frame.shape[1], x + w + pad)
+        y2 = min(frame.shape[0], y + h + pad)
         
-        roi = frame_gray[y1:y2, x1:x2]
+        roi = frame[y1:y2, x1:x2]
         
         if roi.size == 0:
-            return None
+            return (x if is_left else x + w, y + h // 2)
         
-        # Canny edge detection
-        edges = cv2.Canny(roi, self.canny_low, self.canny_high)
+        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray, self.canny_low, self.canny_high)
         
-        # ===== AGGIUNTO: Calcola gradiente per filtrare edge verticali =====
-        # Calcola Sobel per gradiente X e Y
-        sobelx = cv2.Sobel(roi, cv2.CV_64F, 1, 0, ksize=3)
-        sobely = cv2.Sobel(roi, cv2.CV_64F, 0, 1, ksize=3)
+        roi_h = y2 - y1
+        mid_y_min = int(roi_h * self.mid_height_min)
+        mid_y_max = int(roi_h * self.mid_height_max)
         
-        # Magnitudine gradiente
-        grad_mag = np.sqrt(sobelx**2 + sobely**2)
+        candidates = []
+        for py in range(mid_y_min, mid_y_max):
+            if py >= edges.shape[0]:
+                continue
+            
+            edge_pixels = np.where(edges[py, :] > 0)[0]
+            
+            if len(edge_pixels) == 0:
+                continue
+            
+            px = edge_pixels[0] if is_left else edge_pixels[-1]
+            candidates.append((px, py))
         
-        # Angolo gradiente (in radianti)
-        grad_angle = np.arctan2(sobely, sobelx)
+        if len(candidates) == 0:
+            mid_points = contour[(contour[:, 0, 1] >= y + int(h * self.mid_height_min)) & 
+                                 (contour[:, 0, 1] <= y + int(h * self.mid_height_max))]
+            
+            if len(mid_points) > 0:
+                idx = mid_points[:, 0, 0].argmin() if is_left else mid_points[:, 0, 0].argmax()
+                return tuple(mid_points[idx, 0])
+            else:
+                return (x if is_left else x + w, y + h // 2)
         
-        # Converti a gradi
-        grad_angle_deg = np.degrees(grad_angle)
+        candidates = np.array(candidates)
+        median_x = int(np.median(candidates[:, 0]))
+        median_y = int(np.median(candidates[:, 1]))
         
-        # Maschera per edge VERTICALI (±30° dalla verticale)
-        # Edge verticali hanno gradiente orizzontale (angle ≈ 0° o ±180°)
-        vertical_mask = (
-            (np.abs(grad_angle_deg) < 30) |           # Edge verticale destra
-            (np.abs(grad_angle_deg - 180) < 30) |     # Edge verticale sinistra
-            (np.abs(grad_angle_deg + 180) < 30)
-        )
+        global_x = median_x + x1
+        global_y = median_y + y1
         
-        # Combina edge detection con filtro verticale
-        edges_vertical = edges.copy()
-        edges_vertical[~vertical_mask] = 0
-        # ===== FINE AGGIUNTO =====
-        
-        # Converti target_y in coordinate ROI
-        target_y_roi = target_y - y1
-        
-        # Cerca edge nella riga target (±3px di tolleranza)
-        y_min_roi = max(0, target_y_roi - 3)
-        y_max_roi = min(edges_vertical.shape[0], target_y_roi + 3)
-        
-        # Estrai striscia orizzontale
-        edge_strip = edges_vertical[y_min_roi:y_max_roi, :]  # USA edges_vertical
-        
-        if edge_strip.size == 0:
-            return None
-        
-        # Trova edge points nella striscia
-        edge_coords = np.column_stack(np.where(edge_strip > 0))
-        
-        if len(edge_coords) == 0:
-            return None
-        
-        # Converti coordinate strip → ROI
-        edge_points_roi = edge_coords.copy()
-        edge_points_roi[:, 0] += y_min_roi
-        edge_points_roi = edge_points_roi[:, [1, 0]]  # Swap a (x, y)
-        
-        # Seleziona edge point in base alla direzione
-        if search_direction == 'left':
-            idx = edge_points_roi[:, 0].argmin()
-        else:  # 'right'
-            idx = edge_points_roi[:, 0].argmax()
-        
-        edge_point_roi = edge_points_roi[idx]
-        
-        # Converti ROI → coordinate globali
-        edge_x = int(edge_point_roi[0] + x1)
-        edge_y = int(edge_point_roi[1] + y1)
-        
-        return (edge_x, edge_y)
+        return (global_x, global_y)
     
-    def _get_anchor_point_left(
+    def _extract_feature_points(
         self,
+        frame: np.ndarray,
         contour: np.ndarray,
-        frame_gray: np.ndarray
-    ) -> Tuple[int, int]:
-        """
-        Anchor point per faro SINISTRO.
-        
-        STRATEGIA:
-        1. Calcola mid-height del faro (tra 1/4 e 3/4 altezza)
-        2. Usa Canny per trovare edge SINISTRO a quella altezza
-        3. Fallback: punto più a sinistra del contorno a mid-height
-        """
+        is_left: bool
+    ) -> Dict[str, Tuple[int, int]]:
+        """Estrae 3 feature points."""
         x, y, w, h = cv2.boundingRect(contour)
         
-        # Mid-height adattiva
-        mid_ratio = (self.mid_height_min + self.mid_height_max) / 2
-        target_y = int(y + h * mid_ratio)
+        features = {}
         
-        # STRATEGIA 1: Canny edge detection
-        edge_point = self._find_edge_point_with_canny(
-            frame_gray, contour, target_y, search_direction='left'
+        top_idx = contour[:, 0, 1].argmin()
+        features['top'] = tuple(contour[top_idx, 0])
+        
+        bottom_idx = contour[:, 0, 1].argmax()
+        features['bottom'] = tuple(contour[bottom_idx, 0])
+        
+        features['outer'] = self._extract_outer_point_with_canny(
+            frame, contour, (x, y, w, h), is_left
         )
         
-        if edge_point is not None:
-            print(f"  [L] Canny edge: {edge_point}")
-            return edge_point
-        
-        # STRATEGIA 2: Fallback geometrico
-        # Trova punti del contorno nella fascia mid-height (±10% altezza)
-        y_min = int(y + h * self.mid_height_min)
-        y_max = int(y + h * self.mid_height_max)
-        
-        mid_points = contour[(contour[:, 0, 1] >= y_min) & (contour[:, 0, 1] <= y_max)]
-        
-        if len(mid_points) > 0:
-            # Punto più a SINISTRA nella fascia mid
-            leftmost_idx = mid_points[:, 0, 0].argmin()
-            anchor = tuple(mid_points[leftmost_idx, 0])
-            print(f"  [L] Geometric fallback: {anchor}")
-            return anchor
-        
-        # STRATEGIA 3: Ultimo fallback (centro-sinistra bbox)
-        anchor = (x, y + h // 2)
-        print(f"  [L] Bbox fallback: {anchor}")
-        return anchor
+        return features
     
-    def _get_anchor_point_right(
-        self,
-        contour: np.ndarray,
-        frame_gray: np.ndarray
-    ) -> Tuple[int, int]:
-        """
-        Anchor point per faro DESTRO.
+    def detect_tail_lights_multifeature(self, frame: np.ndarray) -> Optional[Dict[str, np.ndarray]]:
+        """Rileva fari multi-feature."""
+        height, width = frame.shape[:2]
         
-        STRATEGIA: Simmetrica a faro sinistro, ma cerca edge DESTRO.
-        """
-        x, y, w, h = cv2.boundingRect(contour)
+        frame_area = width * height
+        min_area = self.min_contour_area_ratio * frame_area
+        max_area = self.max_contour_area_ratio * frame_area
+        max_y = int(height * self.max_y_ratio)
         
-        # Mid-height adattiva
-        mid_ratio = (self.mid_height_min + self.mid_height_max) / 2
-        target_y = int(y + h * mid_ratio)
+        mask = self._create_red_mask(frame)
         
-        # STRATEGIA 1: Canny edge detection
-        edge_point = self._find_edge_point_with_canny(
-            frame_gray, contour, target_y, search_direction='right'
-        )
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 9))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         
-        if edge_point is not None:
-            print(f"  [R] Canny edge: {edge_point}")
-            return edge_point
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # STRATEGIA 2: Fallback geometrico
-        y_min = int(y + h * self.mid_height_min)
-        y_max = int(y + h * self.mid_height_max)
+        candidates = []
+        for c in contours:
+            area = cv2.contourArea(c)
+            
+            if not (min_area < area < max_area):
+                continue
+            
+            x, y, w, h = cv2.boundingRect(c)
+            
+            if y > max_y:
+                continue
+            
+            if w == 0 or h == 0:
+                continue
+            if w / h > 1.0:
+                continue
+            if h / w < self.min_vertical_ratio:
+                continue
+            
+            M = cv2.moments(c)
+            if M["m00"] == 0:
+                continue
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+            
+            candidates.append((c, cx, cy, area))
         
-        mid_points = contour[(contour[:, 0, 1] >= y_min) & (contour[:, 0, 1] <= y_max)]
+        if len(candidates) < 2:
+            return None
         
-        if len(mid_points) > 0:
-            # Punto più a DESTRA nella fascia mid
-            rightmost_idx = mid_points[:, 0, 0].argmax()
-            anchor = tuple(mid_points[rightmost_idx, 0])
-            print(f"  [R] Geometric fallback: {anchor}")
-            return anchor
+        best_pair = None
+        best_score = 0
+        min_distance = 80
+        max_y_diff = 50
         
-        # STRATEGIA 3: Ultimo fallback
-        anchor = (x + w, y + h // 2)
-        print(f"  [R] Bbox fallback: {anchor}")
-        return anchor
+        for i in range(len(candidates)):
+            for j in range(i + 1, len(candidates)):
+                c1, x1, y1, a1 = candidates[i]
+                c2, x2, y2, a2 = candidates[j]
+                
+                dx = abs(x2 - x1)
+                dy = abs(y2 - y1)
+                area_ratio = min(a1, a2) / max(a1, a2)
+                
+                if dx < min_distance or dy > max_y_diff or area_ratio < 0.3:
+                    continue
+                
+                score = dx * 2.0 - dy * 1.0 + area_ratio * 50
+                
+                if score > best_score:
+                    best_score = score
+                    if x1 < x2:
+                        best_pair = (c1, c2)
+                    else:
+                        best_pair = (c2, c1)
+        
+        if best_pair is None:
+            return None
+        
+        left_contour, right_contour = best_pair
+        
+        left_features = self._extract_feature_points(frame, left_contour, is_left=True)
+        right_features = self._extract_feature_points(frame, right_contour, is_left=False)
+        
+        features_dict = {}
+        for feature_name in ['top', 'outer', 'bottom']:
+            left_pt = left_features[feature_name]
+            right_pt = right_features[feature_name]
+            features_dict[feature_name] = np.array([left_pt, right_pt], dtype=np.float32)
+        
+        return features_dict
     
     def _extract_keypoint_template(self, frame: np.ndarray, center: Tuple[int, int]) -> np.ndarray:
-        """Estrae template attorno a un keypoint."""
+        """Estrae template."""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
         cx, cy = center
@@ -313,303 +294,399 @@ class AdvancedDetector:
         
         return template
     
-    def detect_tail_lights(self, frame: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Rileva fari posteriori ADATTIVAMENTE.
+    def detect_tail_lights_with_templates(self, frame: np.ndarray) -> Optional[Tuple[Dict[str, np.ndarray], Dict[str, List[np.ndarray]]]]:
+        """Rileva fari + estrae template."""
+        features_dict = self.detect_tail_lights_multifeature(frame)
         
-        PIPELINE:
-        1. Maschera HSV rosso saturo + alta luminosità
-        2. Morfologia per cleanup
-        3. Trova contorni (filtro solo per area e aspect ratio)
-        4. Clustering left/right
-        5. Anchor points su edge laterali (Canny-refined)
-        
-        Returns:
-            Numpy array (2, 2): [[left_x, left_y], [right_x, right_y]]
-        """
-        height, width = frame.shape[:2]
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
-        # === STEP 1: Maschera rosso ===
-        mask = self._create_red_mask(frame)
-        
-        # === STEP 2: Morfologia ===
-        # Kernel verticale (enfatizza forme verticali)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 7))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        
-        # === STEP 3: Trova contorni ===
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        candidates = []
-        for c in contours:
-            area = cv2.contourArea(c)
-            
-            # Filtro SOLO per area (nessun vincolo Y!)
-            if not (self.min_contour_area < area < self.max_contour_area):
-                continue
-            
-            x, y, w, h = cv2.boundingRect(c)
-            
-            # Filtro aspect ratio (verticale)
-            if h == 0 or w / h > 1.0:  # Non troppo largo
-                continue
-            if h / w < self.min_vertical_ratio:  # Abbastanza verticale
-                continue
-            
-            # Calcola centro per clustering
-            M = cv2.moments(c)
-            if M["m00"] == 0:
-                continue
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-            
-            candidates.append((c, cx, cy, area))
-        
-        if len(candidates) < 2:
-            print(f"  ⚠️ Trovati solo {len(candidates)} candidati (servono almeno 2)")
-            return None
-        
-        print(f"  ✓ Trovati {len(candidates)} candidati")
-        
-        # === STEP 4: SELEZIONE COPPIA OTTIMALE ===
-        # Invece di dividere left/right, trova la coppia con:
-        # 1. Massima distanza orizzontale
-        # 2. Allineamento verticale buono
-        # 3. Area simile
-
-        best_pair = None
-        best_score = 0
-        min_distance = 80  # Distanza minima tra i fari (px)
-        max_y_diff = 50     # Max differenza verticale (px)
-
-        for i in range(len(candidates)):
-            for j in range(i + 1, len(candidates)):
-                c1, x1, y1, a1 = candidates[i]
-                c2, x2, y2, a2 = candidates[j]
-                
-                # Distanza orizzontale
-                dx = abs(x2 - x1)
-                
-                # Differenza verticale
-                dy = abs(y2 - y1)
-                
-                # Ratio area (similarità dimensione)
-                area_ratio = min(a1, a2) / max(a1, a2)
-                
-                # VINCOLI:
-                if dx < min_distance:  # Troppo vicini
-                    continue
-                if dy > max_y_diff:    # Non allineati
-                    continue
-                if area_ratio < 0.3:   # Troppo diversi
-                    continue
-                
-                # SCORE: privilegia distanza + allineamento + similarità
-                score = dx * 2.0 - dy * 1.0 + area_ratio * 50
-                
-                if score > best_score:
-                    best_score = score
-                    if x1 < x2:
-                        best_pair = (c1, c2)  # (left, right)
-                    else:
-                        best_pair = (c2, c1)
-
-        if best_pair is None:
-            return None
-
-        left_contour, right_contour = best_pair
-        
-        # === STEP 5: Anchor points con Canny ===
-        print("🔍 Detecting anchor points (EDGE MID-HEIGHT):")
-        
-        left_point = self._get_anchor_point_left(left_contour, gray)
-        right_point = self._get_anchor_point_right(right_contour, gray)
-        
-        tail_lights = np.array([left_point, right_point], dtype=np.float32)
-        
-        print(f"  ✅ Anchor points: L={left_point}, R={right_point}")
-        
-        return tail_lights
-    
-    def detect_tail_lights_with_templates(self, frame: np.ndarray) -> Optional[Tuple[np.ndarray, List[np.ndarray]]]:
-        """
-        Rileva fari + estrae template.
-        
-        Returns:
-            Tuple (tail_lights, templates) o (None, None)
-        """
-        tail_lights = self.detect_tail_lights(frame)
-        
-        if tail_lights is None:
+        if features_dict is None:
             return None, None
         
-        templates = []
-        for i in range(2):
-            center = tuple(map(int, tail_lights[i]))
-            template = self._extract_keypoint_template(frame, center)
-            templates.append(template)
+        templates_dict = {}
+        for feature_name, points in features_dict.items():
+            templates = []
+            for i in range(2):
+                center = tuple(map(int, points[i]))
+                template = self._extract_keypoint_template(frame, center)
+                templates.append(template)
+            templates_dict[feature_name] = templates
         
-        return tail_lights, templates
+        return features_dict, templates_dict
     
-    def detect_plate_corners(self, frame: np.ndarray, 
-                            tail_lights: np.ndarray) -> Optional[Dict[str, Tuple[int, int]]]:
-        """
-        Rileva angoli targa (invariato dal codice precedente).
-        """
-        tail_lights_tuple = (tuple(map(int, tail_lights[0])), tuple(map(int, tail_lights[1])))
-        
-        height, width = frame.shape[:2]
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        V = hsv[:, :, 2]
-        
-        # Maschera fari
-        mask_lights = cv2.inRange(V, self.red_v_lower, 255)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 9))
-        mask_lights = cv2.morphologyEx(mask_lights, cv2.MORPH_CLOSE, kernel)
-        
-        contours, _ = cv2.findContours(mask_lights, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        fari_bottom_y = []
-        for c in contours:
-            if cv2.contourArea(c) >= 50:
-                ys = c[:, 0, 1]
-                fari_bottom_y.append(max(ys))
-        
-        if not fari_bottom_y:
+    def _fit_line_ransac(self, points: np.ndarray, axis: str = 'horizontal') -> Optional[Tuple[float, float]]:
+        """Fitta linea con RANSAC."""
+        if len(points) < 2:
             return None
         
-        y_base = max(fari_bottom_y)
+        points = np.array(points)
         
-        x1 = int(min(tail_lights_tuple[0][0], tail_lights_tuple[1][0]))
-        x2 = int(max(tail_lights_tuple[0][0], tail_lights_tuple[1][0]))
+        if axis == 'horizontal':
+            X = points[:, 0].reshape(-1, 1)
+            y = points[:, 1]
+            
+            if np.std(X) < 1e-6:
+                return None
+        else:
+            X = points[:, 1].reshape(-1, 1)
+            y = points[:, 0]
+            
+            if np.std(X) < 1e-6:
+                return None
         
-        y1 = min(y_base + 20, height - 1)
-        y2 = min(y1 + int(0.18 * height), height)
+        try:
+            from sklearn.linear_model import RANSACRegressor
+            
+            ransac = RANSACRegressor(
+                residual_threshold=3.0,
+                max_trials=100,
+                min_samples=2,
+                random_state=42
+            )
+            
+            ransac.fit(X, y)
+            
+            slope = ransac.estimator_.coef_[0]
+            intercept = ransac.estimator_.intercept_
+            
+            return (slope, intercept)
+        
+        except Exception:
+            if axis == 'horizontal':
+                slope, intercept, _, _, _ = stats.linregress(points[:, 0], points[:, 1])
+            else:
+                slope, intercept, _, _, _ = stats.linregress(points[:, 1], points[:, 0])
+            
+            return (slope, intercept)
+    
+    def _process_plate_in_roi(
+        self,
+        frame: np.ndarray,
+        roi: np.ndarray,
+        roi_offset: Tuple[int, int]
+    ) -> Optional[Dict[str, Tuple[int, int]]]:
+        """Processing targa con BLOB + RANSAC."""
+        if roi.size == 0 or roi.shape[1] < 50:
+            return None
+        
+        try:
+            hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+            V_roi = hsv_roi[:, :, 2]
+            
+            mask_plate = cv2.inRange(V_roi, self.v_plate_low, self.v_plate_high)
+            
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 3))
+            mask_plate = cv2.morphologyEx(mask_plate, cv2.MORPH_CLOSE, kernel)
+            
+            contours_plate, _ = cv2.findContours(mask_plate, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if not contours_plate:
+                return None
+            
+            largest = max(contours_plate, key=cv2.contourArea)
+            points = largest.reshape(-1, 2)
+            
+            if len(points) < 10:
+                return None
+            
+            y_min = points[:, 1].min()
+            y_max = points[:, 1].max()
+            x_min = points[:, 0].min()
+            x_max = points[:, 0].max()
+            
+            height_plate = y_max - y_min
+            width_plate = x_max - x_min
+            
+            if width_plate < 15 or height_plate < 5:
+                return None
+            
+            top_band = y_min + 0.25 * height_plate
+            bottom_band = y_max - 0.25 * height_plate
+            left_band = x_min + 0.15 * width_plate
+            right_band = x_max - 0.15 * width_plate
+            
+            top_pts = []
+            bottom_pts = []
+            left_pts = []
+            right_pts = []
+            
+            for x, y in points:
+                if y <= top_band and left_band <= x <= right_band:
+                    top_pts.append([x, y])
+                
+                if y >= bottom_band and left_band <= x <= right_band:
+                    bottom_pts.append([x, y])
+                
+                if x <= left_band and top_band <= y <= bottom_band:
+                    left_pts.append([x, y])
+                
+                if x >= right_band and top_band <= y <= bottom_band:
+                    right_pts.append([x, y])
+            
+            top_line = self._fit_line_ransac(np.array(top_pts), 'horizontal') if len(top_pts) >= 2 else None
+            bottom_line = self._fit_line_ransac(np.array(bottom_pts), 'horizontal') if len(bottom_pts) >= 2 else None
+            left_line = self._fit_line_ransac(np.array(left_pts), 'vertical') if len(left_pts) >= 2 else None
+            right_line = self._fit_line_ransac(np.array(right_pts), 'vertical') if len(right_pts) >= 2 else None
+            
+            def intersect_h_v(h_line, v_line):
+                if h_line is None or v_line is None:
+                    return None
+                m_h, q_h = h_line
+                m_v, q_v = v_line
+                denom = 1 - m_h * m_v
+                if abs(denom) < 1e-6:
+                    return None
+                y = (m_h * q_v + q_h) / denom
+                x = m_v * y + q_v
+                return (int(x), int(y))
+            
+            TL = intersect_h_v(top_line, left_line)
+            TR = intersect_h_v(top_line, right_line)
+            BL = intersect_h_v(bottom_line, left_line)
+            BR = intersect_h_v(bottom_line, right_line)
+            
+            if not all([TL, TR, BL, BR]):
+                rect = cv2.minAreaRect(largest)
+                box = cv2.boxPoints(rect)
+                box = np.int32(box)
+                
+                pts = box.reshape(4, 2)
+                s = pts.sum(axis=1)
+                d = np.diff(pts, axis=1)
+                
+                TL = tuple(pts[np.argmin(s)])
+                BR = tuple(pts[np.argmax(s)])
+                TR = tuple(pts[np.argmin(d)])
+                BL = tuple(pts[np.argmax(d)])
+            
+            x1, y1 = roi_offset
+            corners = {
+                "TL": (TL[0] + x1, TL[1] + y1),
+                "TR": (TR[0] + x1, TR[1] + y1),
+                "BL": (BL[0] + x1, BL[1] + y1),
+                "BR": (BR[0] + x1, BR[1] + y1)
+            }
+            
+            return corners
+        
+        except Exception as e:
+            return None
+    
+    def _estimate_velocity(self) -> np.ndarray:
+        """
+        Stima velocità targa da history.
+        
+        Returns:
+            Velocità [vx, vy] in px/frame
+        """
+        if len(self.plate_center_history) < 2:
+            return np.array([0.0, 0.0])
+        
+        # Usa ultimi 3 punti per calcolo velocità
+        recent = list(self.plate_center_history)[-3:]
+        
+        velocities = []
+        for i in range(len(recent) - 1):
+            delta = np.array(recent[i+1]) - np.array(recent[i])
+            velocities.append(delta)
+        
+        # Media velocità
+        avg_velocity = np.mean(velocities, axis=0)
+        
+        return avg_velocity
+    
+    def _check_temporal_stability(self, corners: Dict[str, Tuple[int, int]]) -> bool:
+        """
+        Verifica stabilità ADAPTIVE.
+        
+        MIGLIORAMENTI:
+        1. Threshold basato su velocità stimata
+        2. Warmup progressivo
+        3. Confidence decay
+        """
+        if self.prev_plate_corners is None:
+            return True
+        
+        # Calcola centro
+        xs = [x for x, y in corners.values()]
+        ys = [y for x, y in corners.values()]
+        current_center = np.array([np.mean(xs), np.mean(ys)])
+        
+        prev_xs = [x for x, y in self.prev_plate_corners.values()]
+        prev_ys = [y for x, y in self.prev_plate_corners.values()]
+        prev_center = np.array([np.mean(prev_xs), np.mean(prev_ys)])
+        
+        delta = np.linalg.norm(current_center - prev_center)
+        
+        # ===== FIX: ADAPTIVE THRESHOLD =====
+        # Base threshold
+        if self.plate_detection_count < self.warmup_frames:
+            base_threshold = self.base_max_jump_pixels * 2.0  # Warmup
+        else:
+            base_threshold = self.base_max_jump_pixels
+        
+        # Stima velocità
+        velocity = self._estimate_velocity()
+        expected_movement = np.linalg.norm(velocity)
+        
+        # Threshold adattivo: base + expected_movement * safety_factor
+        threshold = base_threshold + expected_movement * 2.0
+        
+        # Clamp threshold
+        threshold = min(threshold, 200.0)  # Max 200px
+        
+        if delta > threshold:
+            print(f"⚠️ Plate JUMP: {delta:.1f}px > {threshold:.1f}px (vel={expected_movement:.1f}px/frame)")
+            
+            # Decay confidence
+            self.detection_confidence *= 0.7
+            
+            return False
+        
+        # Aggiorna confidence
+        self.detection_confidence = min(1.0, self.detection_confidence * 1.1)
+        
+        # Aggiorna history
+        self.plate_center_history.append(current_center)
+        
+        self.plate_detection_count += 1
+        return True
+    
+    def detect_plate_corners(
+        self,
+        frame: np.ndarray,
+        tail_lights_features: Dict[str, np.ndarray]
+    ) -> Optional[Dict[str, Tuple[int, int]]]:
+        """Rileva angoli targa con ADAPTIVE THRESHOLD."""
+        height, width = frame.shape[:2]
+        
+        bottom_points = tail_lights_features.get('bottom')
+        outer_points = tail_lights_features.get('outer')
+        
+        if bottom_points is None or outer_points is None:
+            return None
+        
+        fari_bottom_y = max(bottom_points[0][1], bottom_points[1][1])
+        
+        lights_x_min = min(outer_points[0][0], outer_points[1][0])
+        lights_x_max = max(outer_points[0][0], outer_points[1][0])
+        lights_width = lights_x_max - lights_x_min
+        
+        margin_x = int(lights_width * 0.10)
+        x1 = max(0, int(lights_x_min - margin_x))
+        x2 = min(width, int(lights_x_max + margin_x))
+        
+        scale = lights_width
+        y1 = int(fari_bottom_y + 0.15 * scale)
+        y2 = int(fari_bottom_y + 0.45 * scale)
+        
+        y1 = max(0, y1)
+        y2 = min(height, y2)
         
         roi = frame[y1:y2, x1:x2]
         
-        if roi.size == 0:
-            return None
+        corners = self._process_plate_in_roi(frame, roi, (x1, y1))
         
-        hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-        V_roi = hsv_roi[:, :, 2]
-        
-        mask_plate = cv2.inRange(V_roi, self.v_plate_low, self.v_plate_high)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3))
-        mask_plate = cv2.morphologyEx(mask_plate, cv2.MORPH_CLOSE, kernel)
-        
-        contours, _ = cv2.findContours(mask_plate, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
-        
-        largest = max(contours, key=cv2.contourArea)
-        mask_cluster = np.zeros_like(mask_plate)
-        cv2.drawContours(mask_cluster, [largest], -1, 255, -1)
-        
-        mask_exp = cv2.dilate(mask_cluster,
-                             cv2.getStructuringElement(cv2.MORPH_RECT, (15, 7)),
-                             iterations=2)
-        
-        edges = cv2.Canny(mask_exp, 60, 180)
-        
-        lines = cv2.HoughLinesP(edges, rho=1, theta=np.pi/180, 
-                               threshold=60, minLineLength=40, maxLineGap=15)
-        
-        if lines is None or len(lines) < 4:
-            return None
-        
-        verticals, horizontals = [], []
-        
-        for l in lines:
-            x1, y1, x2, y2 = l[0]
-            angle = abs(np.degrees(np.arctan2(y2 - y1, x2 - x1)))
+        if corners is None:
+            # ===== FIX: PREDICTION SE DETECTION FALLISCE =====
+            if self.prev_plate_corners is not None and len(self.plate_center_history) >= 2:
+                # Predici usando velocità
+                velocity = self._estimate_velocity()
+                
+                predicted_corners = {}
+                for key, (px, py) in self.prev_plate_corners.items():
+                    predicted_corners[key] = (
+                        int(px + velocity[0]),
+                        int(py + velocity[1])
+                    )
+                
+                print(f"⚡ Using predicted plate position (vel={velocity})")
+                return predicted_corners
             
-            if 60 < angle < 120:
-                verticals.append((x1, y1, x2, y2))
-            elif angle < 30 or angle > 150:
-                horizontals.append((x1, y1, x2, y2))
-        
-        if len(verticals) < 2 or len(horizontals) < 2:
+            if self.prev_plate_corners is not None:
+                print("⚡ Using previous plate position (detection failed)")
+                return self.prev_plate_corners
+            
             return None
         
-        def line_midpoint(l):
-            return ((l[0] + l[2]) // 2, (l[1] + l[3]) // 2)
+        # Verifica stabilità
+        if not self._check_temporal_stability(corners):
+            # Salto troppo grande: usa predizione o precedente
+            if self.prev_plate_corners is not None:
+                if self.detection_confidence < self.min_confidence:
+                    # Confidence troppo bassa: accetta nuova detection
+                    print(f"✓ Accepting new detection (low confidence: {self.detection_confidence:.2f})")
+                    self.prev_plate_corners = corners
+                    self.detection_confidence = 0.5
+                    return corners
+                else:
+                    # Usa precedente
+                    return self.prev_plate_corners
         
-        left_line = min(verticals, key=lambda l: line_midpoint(l)[0])
-        right_line = max(verticals, key=lambda l: line_midpoint(l)[0])
-        top_line = min(horizontals, key=lambda l: line_midpoint(l)[1])
-        bottom_line = max(horizontals, key=lambda l: line_midpoint(l)[1])
-        
-        def fit_line(line):
-            x1, y1, x2, y2 = line
-            pts = np.array([[x1, y1], [x2, y2]], dtype=np.float32)
-            vx, vy, x0, y0 = cv2.fitLine(pts, cv2.DIST_L2, 0, 0.01, 0.01)
-            return vx[0], vy[0], x0[0], y0[0]
-        
-        def intersect(l1, l2):
-            vx1, vy1, x1, y1 = l1
-            vx2, vy2, x2, y2 = l2
-            
-            A = np.array([[vx1, -vx2], [vy1, -vy2]])
-            B = np.array([[x2 - x1], [y2 - y1]])
-            
-            try:
-                t = np.linalg.lstsq(A, B, rcond=None)[0]
-                xi = x1 + t[0] * vx1
-                yi = y1 + t[0] * vy1
-                return int(xi), int(yi)
-            except:
-                return None
-        
-        L = fit_line(left_line)
-        R = fit_line(right_line)
-        T = fit_line(top_line)
-        B = fit_line(bottom_line)
-        
-        TL = intersect(L, T)
-        TR = intersect(R, T)
-        BL = intersect(L, B)
-        BR = intersect(R, B)
-        
-        if None in [TL, TR, BL, BR]:
-            return None
-        
-        # Converti a coordinate globali (aggiungi offset ROI)
-        corners = {
-            "TL": (TL[0] + x1, TL[1] + y1),
-            "TR": (TR[0] + x1, TR[1] + y1),
-            "BL": (BL[0] + x1, BL[1] + y1),
-            "BR": (BR[0] + x1, BR[1] + y1)
-        }
+        # Aggiorna stato
+        self.prev_plate_corners = corners
         
         return corners
     
-    def detect_all(self, frame: np.ndarray) -> Optional[VehicleKeypoints]:
+    def update_plate_bottom_only(
+        self,
+        frame: np.ndarray,
+        tail_lights_features: Dict[str, np.ndarray]
+    ) -> Optional[np.ndarray]:
+        """Aggiorna plate bottom con ROBUSTEZZA."""
+        plate_corners = self.detect_plate_corners(frame, tail_lights_features)
+        
+        if plate_corners is None:
+            return self.prev_plate_bottom
+        
+        BL = np.array(plate_corners['BL'], dtype=np.float32)
+        BR = np.array(plate_corners['BR'], dtype=np.float32)
+        
+        plate_bottom = np.array([BL, BR], dtype=np.float32)
+        
+        self.prev_plate_bottom = plate_bottom
+        
+        return plate_bottom
+    
+    def detect_all_multifeature(self, frame: np.ndarray) -> Optional[VehicleKeypoints]:
         """Rileva tutti i punti chiave."""
-        tail_lights, templates = self.detect_tail_lights_with_templates(frame)
-        if tail_lights is None:
+        features_dict, templates_dict = self.detect_tail_lights_with_templates(frame)
+        if features_dict is None:
             return None
         
-        plate_corners = self.detect_plate_corners(frame, tail_lights)
+        plate_corners = self.detect_plate_corners(frame, features_dict)
         
+        plate_bottom = None
         if plate_corners:
+            BL = np.array(plate_corners['BL'], dtype=np.float32)
+            BR = np.array(plate_corners['BR'], dtype=np.float32)
+            plate_bottom = np.array([BL, BR], dtype=np.float32)
+            
             xs = [x for x, y in plate_corners.values()]
             ys = [y for x, y in plate_corners.values()]
             plate_center = (int(np.mean(xs)), int(np.mean(ys)))
-            confidence = 1.0
+            
+            # Aggiorna history
+            self.plate_center_history.append(np.array(plate_center))
+            
+            confidence = self.detection_confidence
         else:
+            outer = features_dict['outer']
             plate_center = (
-                int((tail_lights[0][0] + tail_lights[1][0]) / 2),
-                int((tail_lights[0][1] + tail_lights[1][1]) / 2) + 50
+                int((outer[0][0] + outer[1][0]) / 2),
+                int((outer[0][1] + outer[1][1]) / 2) + 50
             )
             confidence = 0.5
         
         return VehicleKeypoints(
-            tail_lights=tail_lights,
+            tail_lights_features=features_dict,
             plate_corners=plate_corners,
+            plate_bottom=plate_bottom,
             plate_center=plate_center,
             confidence=confidence,
-            templates=templates
+            templates=templates_dict
         )
+    
+    def detect_tail_lights(self, frame: np.ndarray) -> Optional[np.ndarray]:
+        """Backward compatibility."""
+        features_dict = self.detect_tail_lights_multifeature(frame)
+        if features_dict is None:
+            return None
+        return features_dict.get('outer')

@@ -1,139 +1,155 @@
 """
-BBox 3D Projector - VERSIONE FINALE CORRETTA
-- Posteriore ALLINEATO ai fari
-- Validazione visiva con croci
+BBox 3D Projector - AGGIORNATO PER NUOVO YAML
+
+Proietta bounding box 3D del veicolo sull'immagine.
+Usa 'outer' points come riferimento (coerente con VanishingPointSolver).
 """
 
-import cv2
 import numpy as np
-from typing import Tuple, Optional, Dict
-from src.calibration.load_calibration import CameraParameters
+import cv2
+from typing import Optional
 
 
 class BBox3DProjector:
-    """Proietta bbox 3D allineata ESATTAMENTE ai fari."""
+    """
+    Proietta bounding box 3D del veicolo.
     
-    def __init__(self, camera_params: CameraParameters, vehicle_config: Dict):
+    COORDINATE (dal YAML):
+    - Origine: centro asse ruote posteriori a livello suolo
+    - X: avanti (positivo)
+    - Y: sinistra (positivo)
+    - Z: su (positivo)
+    """
+    
+    def __init__(self, camera_params, vehicle_model: dict):
         self.camera_matrix = camera_params.camera_matrix
         self.dist_coeffs = camera_params.dist_coeffs
         
-        vehicle_data = vehicle_config.get('vehicle', {})
-        dimensions = vehicle_data.get('dimensions', {})
+        vehicle_data = vehicle_model.get('vehicle', {})
+        
+        # ===== PARSING CORRETTO YAML (NUOVO FORMATO) =====
         tail_lights = vehicle_data.get('tail_lights', {})
         
-        # Dimensioni veicolo
+        # Usa 'outer' come punto di riferimento (coerente con VanishingPointSolver)
+        left_light_dict = tail_lights.get('left', {})
+        right_light_dict = tail_lights.get('right', {})
+        
+        # Estrai outer points
+        left_outer = left_light_dict.get('outer', [-0.30, 0.71, 1.04])
+        right_outer = right_light_dict.get('outer', [-0.30, -0.71, 1.04])
+        
+        # Coordinate outer (reference per posa)
+        self.lights_x = left_outer[0]      # -0.30m (posteriore)
+        self.lights_y = left_outer[1]      # 0.71m (sinistra)
+        self.lights_z = left_outer[2]      # 1.04m (altezza)
+        
+        # ===== DIMENSIONI BBOX =====
+        dimensions = vehicle_data.get('dimensions', {})
+        
         self.length = dimensions.get('length', 3.70)
         self.width = dimensions.get('width', 1.74)
         self.height = dimensions.get('height', 1.525)
         
-        # Posizione fari (coordinate 3D nel sistema veicolo)
-        left_light = tail_lights.get('left', [-0.27, 0.70, 0.50])
-        right_light = tail_lights.get('right', [-0.27, -0.70, 0.50])
+        # ===== VERTICI BBOX 3D (dal YAML) =====
+        bbox_vertices = vehicle_data.get('bbox_vertices', {})
         
-        self.lights_x = left_light[0]      # -0.27m (posteriore)
-        self.lights_z = left_light[2]       # 0.50m (altezza)
-        self.lights_y_spacing = left_light[1] * 2  # 1.40m (distanza)
+        # Base (suolo, Z=0)
+        self.bottom_rear_right = np.array(
+            bbox_vertices.get('bottom_rear_right', [0.0, -0.87, 0.0]), 
+            dtype=np.float32
+        )
+        self.bottom_rear_left = np.array(
+            bbox_vertices.get('bottom_rear_left', [0.0, 0.87, 0.0]), 
+            dtype=np.float32
+        )
+        self.bottom_front_left = np.array(
+            bbox_vertices.get('bottom_front_left', [3.70, 0.87, 0.0]), 
+            dtype=np.float32
+        )
+        self.bottom_front_right = np.array(
+            bbox_vertices.get('bottom_front_right', [3.70, -0.87, 0.0]), 
+            dtype=np.float32
+        )
         
-        # ✅ Vertici bbox + posizioni teoriche fari
-        self.bbox_vertices_3d = self._compute_bbox_vertices()
-        self.theoretical_lights_3d = np.array([left_light, right_light], dtype=np.float32)
+        # Top (tetto, Z=height)
+        self.top_rear_right = np.array(
+            bbox_vertices.get('top_rear_right', [0.0, -0.87, 1.525]), 
+            dtype=np.float32
+        )
+        self.top_rear_left = np.array(
+            bbox_vertices.get('top_rear_left', [0.0, 0.87, 1.525]), 
+            dtype=np.float32
+        )
+        self.top_front_left = np.array(
+            bbox_vertices.get('top_front_left', [3.70, 0.87, 1.525]), 
+            dtype=np.float32
+        )
+        self.top_front_right = np.array(
+            bbox_vertices.get('top_front_right', [3.70, -0.87, 1.525]), 
+            dtype=np.float32
+        )
         
-        print(f"[BBox] Fari a: X={self.lights_x}m, Z={self.lights_z}m, spacing={self.lights_y_spacing}m")
-    
-    def _compute_bbox_vertices(self) -> np.ndarray:
-        """
-        Calcola vertici bbox.
-        
-        CHIAVE: Il posteriore inizia a X = lights_x (dove sono i fari)
-                Il frontale finisce a X = lights_x + length
-        """
-        half_width = self.width / 2
-        
-        # Posteriore (dove stanno i fari)
-        x_rear = self.lights_x  # -0.27m
-        
-        # Frontale
-        x_front = x_rear + self.length  # -0.27 + 3.70 = 3.43m
-        
-        vertices = np.array([
-            # Base (z=0, a terra)
-            [x_rear, -half_width, 0.0],      # 0: rear-right
-            [x_rear, half_width, 0.0],       # 1: rear-left
-            [x_front, half_width, 0.0],      # 2: front-left
-            [x_front, -half_width, 0.0],     # 3: front-right
-            
-            # Top (z=height)
-            [x_rear, -half_width, self.height],   # 4
-            [x_rear, half_width, self.height],    # 5
-            [x_front, half_width, self.height],   # 6
-            [x_front, -half_width, self.height]   # 7
+        # ==========================================================
+        # BBOX VERTICES - SISTEMA VEICOLO
+        # ==========================================================
+        # La posa (rvec, tvec) ha origine alle RUOTE POSTERIORI
+        # La bbox è già definita con origine alle ruote
+        # NON serve offset
+        # ==========================================================
+
+        self.bbox_3d = np.array([
+            self.bottom_rear_right,   # 0
+            self.bottom_rear_left,    # 1
+            self.bottom_front_left,   # 2
+            self.bottom_front_right,  # 3
+            self.top_rear_right,      # 4
+            self.top_rear_left,       # 5
+            self.top_front_left,      # 6
+            self.top_front_right      # 7
         ], dtype=np.float32)
+
+        print(f"[BBox3DProjector] Initialized:")
+        print(f"  Vehicle: {self.length:.2f}m × {self.width:.2f}m × {self.height:.2f}m")
+        print(f"  BBox origin: rear axle center at ground level")
         
-        return vertices
+        print(f"[BBox3DProjector] Initialized:")
+        print(f"  Vehicle: {self.length:.2f}m × {self.width:.2f}m × {self.height:.2f}m")
+        print(f"  Reference: outer points at [{self.lights_x:.2f}, ±{self.lights_y:.2f}, {self.lights_z:.2f}]")
     
     def project_bbox(
         self,
         rvec: np.ndarray,
         tvec: np.ndarray
     ) -> Optional[np.ndarray]:
-        """Proietta bbox."""
-        try:
-            projected, _ = cv2.projectPoints(
-                self.bbox_vertices_3d,
-                rvec, tvec,
-                self.camera_matrix,
-                self.dist_coeffs
-            )
-            return projected.reshape(-1, 2).astype(int)
-        except:
-            return None
-    
-    def project_theoretical_lights(
-        self,
-        rvec: np.ndarray,
-        tvec: np.ndarray
-    ) -> Optional[np.ndarray]:
         """
-        Proietta posizioni TEORICHE dei fari (dove dovrebbero stare sulla bbox).
-        
-        Returns:
-            [[L_x, L_y], [R_x, R_y]] proiettati, o None
-        """
-        try:
-            projected, _ = cv2.projectPoints(
-                self.theoretical_lights_3d,
-                rvec, tvec,
-                self.camera_matrix,
-                self.dist_coeffs
-            )
-            return projected.reshape(-1, 2).astype(int)
-        except:
-            return None
-    
-    def validate_bbox_alignment(
-        self,
-        measured_lights: np.ndarray,
-        theoretical_lights: np.ndarray,
-        threshold_pixels: float = 20.0
-    ) -> Tuple[bool, float]:
-        """
-        Valida se bbox è ben allineata ai fari misurati.
+        Proietta bbox 3D sull'immagine.
         
         Args:
-            measured_lights: Fari rilevati [[L_x, L_y], [R_x, R_y]]
-            theoretical_lights: Fari teorici sulla bbox
-            threshold_pixels: Errore massimo permesso
-            
+            rvec: vettore rotazione (3,1)
+            tvec: vettore traslazione (3,1)
+        
         Returns:
-            (is_aligned, error_pixels)
+            np.ndarray (8, 2) con coordinate 2D dei vertici, o None se errore
         """
-        # Calcola errore medio
-        errors = np.linalg.norm(measured_lights - theoretical_lights, axis=1)
-        mean_error = np.mean(errors)
+        try:
+            # Proietta 8 vertici 3D → 2D
+            points_2d, _ = cv2.projectPoints(
+                self.bbox_3d,
+                rvec,
+                tvec,
+                self.camera_matrix,
+                self.dist_coeffs
+            )
+            
+            # Reshape a (8, 2)
+            points_2d = points_2d.reshape(-1, 2)
+            
+            return points_2d
         
-        is_aligned = mean_error < threshold_pixels
-        
-        return is_aligned, mean_error
+        except Exception as e:
+            print(f"  ⚠️ BBox projection failed: {e}")
+            return None
     
     def get_bbox_vertices_3d(self) -> np.ndarray:
-        return self.bbox_vertices_3d.copy()
+        """Ritorna vertici bbox 3D nel sistema veicolo."""
+        return self.bbox_3d.copy()

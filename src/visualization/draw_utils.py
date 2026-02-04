@@ -1,6 +1,11 @@
 """
-Draw Utils - Funzioni di visualizzazione ESTESE per debug
-Include: VP, assi 3D, piano π, info geometriche
+Draw Utils - VISUALIZZAZIONE CORRETTA COMPLETA - FIXED GEOMETRIA
+FIX CRITICI:
+1. extend_line_bidirectional: prolunga in ENTRAMBE le direzioni
+2. Debug mask: mostra CONTORNO PROCESSATO come nello script Jupiter
+3. Visualizzazione VP: linee convergono CORRETTAMENTE ai vanishing points
+4. NESSUNA duplicazione legenda
+5. Indentazione CORRETTA
 """
 
 import cv2
@@ -37,14 +42,14 @@ def draw_motion_type_overlay(frame: np.ndarray,
     """Disegna overlay tipo movimento."""
     h, w = frame.shape[:2]
     
-    text_color = (0, 255, 255)  # Giallo
+    text_color = (0, 255, 255)
     
     if motion_type == "TRANSLATION":
-        bg_color = (0, 128, 0)  # Verde scuro
+        bg_color = (0, 128, 0)
     elif motion_type == "ROTATION":
-        bg_color = (0, 0, 128)  # Rosso scuro
+        bg_color = (0, 0, 128)
     else:
-        bg_color = (0, 82, 128)  # Arancione scuro
+        bg_color = (0, 82, 128)
     
     text = f"MOTION: {motion_type}"
     font = cv2.FONT_HERSHEY_SIMPLEX
@@ -70,225 +75,6 @@ def draw_motion_type_overlay(frame: np.ndarray,
                font, font_scale, text_color, thickness, cv2.LINE_AA)
 
 
-def draw_vanishing_points_complete(
-    frame: np.ndarray,
-    lights_frame1: Optional[np.ndarray],
-    lights_frame2: Optional[np.ndarray],
-    Vx: Optional[np.ndarray],
-    Vy: Optional[np.ndarray],
-    dot_product: Optional[float] = None,
-    show_lines: bool = True,
-    show_labels: bool = True
-) -> None:
-    """
-    Disegna COMPLETO dei vanishing points con tutte le geometrie.
-    
-    Args:
-        frame: Frame da modificare in-place
-        lights_frame1: Luci frame precedente [[L1_x,L1_y], [R1_x,R1_y]]
-        lights_frame2: Luci frame corrente [[L2_x,L2_y], [R2_x,R2_y]]
-        Vx: Vanishing point segmenti luci
-        Vy: Vanishing point traiettorie
-        dot_product: Prodotto scalare per perpendicolarità
-        show_lines: Mostra linee geometriche
-        show_labels: Mostra etichette
-    """
-    if lights_frame1 is None or lights_frame2 is None:
-        return
-    
-    h, w = frame.shape[:2]
-    
-    L1, R1 = lights_frame1[0], lights_frame1[1]
-    L2, R2 = lights_frame2[0], lights_frame2[1]
-    
-    # ========== LUCI CORRENTI ==========
-    
-    # Cerchi luci frame2 (più grandi, evidenziati)
-    cv2.circle(frame, tuple(L2.astype(int)), 10, (255, 255, 0), -1)  # Cyan LEFT
-    cv2.circle(frame, tuple(R2.astype(int)), 10, (255, 0, 255), -1)  # Magenta RIGHT
-    
-    # Bordo nero per contrasto
-    cv2.circle(frame, tuple(L2.astype(int)), 12, (0, 0, 0), 2)
-    cv2.circle(frame, tuple(R2.astype(int)), 12, (0, 0, 0), 2)
-    
-    if show_labels:
-        cv2.putText(frame, "L2", (int(L2[0])-30, int(L2[1])-15),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-        cv2.putText(frame, "R2", (int(R2[0])+15, int(R2[1])-15),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
-    
-    # Segmento luci frame2 (orizzontale, VERDE)
-    cv2.line(frame, tuple(L2.astype(int)), tuple(R2.astype(int)),
-            (0, 255, 0), 3)
-    
-    # ========== LUCI PRECEDENTI (più piccole, trasparenti) ==========
-    
-    if show_lines:
-        # Cerchi luci frame1 (piccoli)
-        cv2.circle(frame, tuple(L1.astype(int)), 5, (100, 255, 255), -1)
-        cv2.circle(frame, tuple(R1.astype(int)), 5, (255, 100, 255), -1)
-        
-        if show_labels:
-            cv2.putText(frame, "L1", (int(L1[0])-25, int(L1[1])+20),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 255, 255), 1)
-            cv2.putText(frame, "R1", (int(R1[0])+10, int(R1[1])+20),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 100, 255), 1)
-        
-        # Segmento luci frame1 (orizzontale, VERDE chiaro)
-        cv2.line(frame, tuple(L1.astype(int)), tuple(R1.astype(int)),
-                (100, 255, 100), 2)
-    
-    # ========== VANISHING POINT Vx (SEGMENTI LUCI) ==========
-    
-    if Vx is not None and show_lines:
-        # Linee dai segmenti verso Vx (GIALLO)
-        # Da L1-R1 verso Vx
-        cv2.line(frame, tuple(L1.astype(int)), tuple(Vx.astype(int)),
-                (0, 255, 255), 2, cv2.LINE_AA)
-        cv2.line(frame, tuple(R1.astype(int)), tuple(Vx.astype(int)),
-                (0, 255, 255), 2, cv2.LINE_AA)
-        
-        # Da L2-R2 verso Vx (più spesso)
-        cv2.line(frame, tuple(L2.astype(int)), tuple(Vx.astype(int)),
-                (0, 255, 255), 3, cv2.LINE_AA)
-        cv2.line(frame, tuple(R2.astype(int)), tuple(Vx.astype(int)),
-                (0, 255, 255), 3, cv2.LINE_AA)
-        
-        # Disegna Vx
-        if 0 <= Vx[0] < w and 0 <= Vx[1] < h:
-            # Dentro frame: croce + cerchio
-            cv2.drawMarker(frame, tuple(Vx.astype(int)), (0, 255, 255),
-                         cv2.MARKER_CROSS, 40, 4)
-            cv2.circle(frame, tuple(Vx.astype(int)), 15, (0, 255, 255), 3)
-            cv2.circle(frame, tuple(Vx.astype(int)), 17, (0, 0, 0), 2)  # Bordo
-            
-            if show_labels:
-                cv2.putText(frame, "Vx", (int(Vx[0])+25, int(Vx[1])-20),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 255), 3)
-                cv2.putText(frame, "(light segments)", (int(Vx[0])+25, int(Vx[1])+5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-        else:
-            # Fuori frame: freccia direzionale
-            center = np.array([w//2, h//2], dtype=float)
-            direction = Vx - center
-            direction = direction / np.linalg.norm(direction)
-            
-            edge_point = center + direction * min(w, h) * 0.4
-            
-            cv2.arrowedLine(frame, tuple(center.astype(int)), 
-                          tuple(edge_point.astype(int)),
-                          (0, 255, 255), 4, tipLength=0.3)
-            
-            if show_labels:
-                cv2.putText(frame, "Vx →", tuple((edge_point + direction*30).astype(int)),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-    
-    # ========== VANISHING POINT Vy (TRAIETTORIE) ==========
-    
-    if Vy is not None and show_lines:
-        # Traiettorie (CYAN e MAGENTA)
-        # L1 → L2 (traiettoria luce sinistra)
-        cv2.line(frame, tuple(L1.astype(int)), tuple(L2.astype(int)),
-                (255, 255, 0), 3)
-        
-        # R1 → R2 (traiettoria luce destra)
-        cv2.line(frame, tuple(R1.astype(int)), tuple(R2.astype(int)),
-                (255, 0, 255), 3)
-        
-        # Estensioni verso Vy
-        if 0 <= Vy[0] < w*2 and 0 <= Vy[1] < h*2:
-            cv2.line(frame, tuple(L2.astype(int)), tuple(Vy.astype(int)),
-                    (255, 255, 0), 2, cv2.LINE_AA)
-            cv2.line(frame, tuple(R2.astype(int)), tuple(Vy.astype(int)),
-                    (255, 0, 255), 2, cv2.LINE_AA)
-        
-        # Disegna Vy
-        if 0 <= Vy[0] < w and 0 <= Vy[1] < h:
-            # Dentro frame: croce + cerchio
-            cv2.drawMarker(frame, tuple(Vy.astype(int)), (0, 0, 255),
-                         cv2.MARKER_CROSS, 40, 4)
-            cv2.circle(frame, tuple(Vy.astype(int)), 15, (0, 0, 255), 3)
-            cv2.circle(frame, tuple(Vy.astype(int)), 17, (0, 0, 0), 2)  # Bordo
-            
-            if show_labels:
-                cv2.putText(frame, "Vy", (int(Vy[0])+25, int(Vy[1])-20),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 3)
-                cv2.putText(frame, "(trajectories)", (int(Vy[0])+25, int(Vy[1])+5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-        else:
-            # Fuori frame: freccia direzionale
-            center = np.array([w//2, h//2], dtype=float)
-            direction = Vy - center
-            direction = direction / np.linalg.norm(direction)
-            
-            edge_point = center + direction * min(w, h) * 0.35
-            
-            cv2.arrowedLine(frame, tuple(center.astype(int)), 
-                          tuple(edge_point.astype(int)),
-                          (0, 0, 255), 4, tipLength=0.3)
-            
-            if show_labels:
-                cv2.putText(frame, "Vy →", tuple((edge_point + direction*30).astype(int)),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-    
-    # ========== VANISHING LINE (se entrambi i VP sono visibili) ==========
-    
-    if Vx is not None and Vy is not None and show_lines:
-        # Linea tratteggiata tra Vx e Vy (BIANCO)
-        if (0 <= Vx[0] < w*2 and 0 <= Vx[1] < h*2 and
-            0 <= Vy[0] < w*2 and 0 <= Vy[1] < h*2):
-            
-            # Disegna linea tratteggiata
-            draw_dashed_line(frame, 
-                           tuple(Vx.astype(int)), 
-                           tuple(Vy.astype(int)),
-                           (255, 255, 255), 2, gap=10)
-            
-            # Etichetta vanishing line
-            if show_labels:
-                mid = ((Vx + Vy) / 2).astype(int)
-                if 0 <= mid[0] < w and 0 <= mid[1] < h:
-                    cv2.putText(frame, "vanishing line l", tuple(mid),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    
-    # ========== INFO PERPENDICOLARITÀ ==========
-    
-    if dot_product is not None:
-        # Box info in basso a sinistra
-        info_y = h - 80
-        
-        # Background semi-trasparente
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (5, info_y - 25), (400, h - 5), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
-        
-        # Testo
-        perp_text = f"K^-1·Vx ⊥ K^-1·Vy: {dot_product:.4f}"
-        color = (0, 255, 0) if dot_product < 0.2 else (0, 165, 255)
-        
-        cv2.putText(frame, perp_text, (10, info_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-        
-        status = "PERPENDICULAR ✓" if dot_product < 0.2 else "NOT PERPENDICULAR ✗"
-        cv2.putText(frame, status, (10, info_y + 25),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
-
-def draw_dashed_line(frame, pt1, pt2, color, thickness=1, gap=10):
-    """Disegna linea tratteggiata."""
-    dist = np.linalg.norm(np.array(pt2) - np.array(pt1))
-    pts = []
-    for i in np.arange(0, dist, gap):
-        r = i / dist
-        x = int((1 - r) * pt1[0] + r * pt2[0])
-        y = int((1 - r) * pt1[1] + r * pt2[1])
-        pts.append((x, y))
-    
-    for i in range(0, len(pts) - 1, 2):
-        if i + 1 < len(pts):
-            cv2.line(frame, pts[i], pts[i+1], color, thickness, cv2.LINE_AA)
-
-
 def draw_3d_axes(
     frame: np.ndarray,
     rvec: np.ndarray,
@@ -298,27 +84,14 @@ def draw_3d_axes(
     axis_length: float = 1.5,
     thickness: int = 4
 ) -> None:
-    """
-    Disegna assi 3D del sistema veicolo con etichette.
-    
-    Args:
-        frame: Frame da modificare
-        rvec: Rotation vector
-        tvec: Translation vector
-        camera_matrix: Matrice intrinseca K
-        dist_coeffs: Coefficienti distorsione
-        axis_length: Lunghezza assi in metri
-        thickness: Spessore linee
-    """
-    # Definisci assi nel sistema veicolo
+    """Disegna assi 3D del sistema veicolo."""
     axis_points = np.array([
-        [0, 0, 0],                    # Origine (a terra, centro ruote post)
-        [axis_length, 0, 0],          # X: avanti (ROSSO)
-        [0, axis_length, 0],          # Y: sinistra (VERDE)
-        [0, 0, axis_length]           # Z: su (BLU)
+        [0, 0, 0],
+        [axis_length, 0, 0],
+        [0, axis_length, 0],
+        [0, 0, axis_length]
     ], dtype=np.float32)
     
-    # Proietta assi
     projected, _ = cv2.projectPoints(
         axis_points, rvec, tvec, camera_matrix, dist_coeffs
     )
@@ -330,16 +103,13 @@ def draw_3d_axes(
     y_end = tuple(projected[2])
     z_end = tuple(projected[3])
     
-    # Disegna assi con colori e spessore
-    cv2.line(frame, origin, x_end, (0, 0, 255), thickness, cv2.LINE_AA)    # X: Rosso
-    cv2.line(frame, origin, y_end, (0, 255, 0), thickness, cv2.LINE_AA)    # Y: Verde
-    cv2.line(frame, origin, z_end, (255, 0, 0), thickness, cv2.LINE_AA)    # Z: Blu
+    cv2.line(frame, origin, x_end, (0, 0, 255), thickness, cv2.LINE_AA)
+    cv2.line(frame, origin, y_end, (0, 255, 0), thickness, cv2.LINE_AA)
+    cv2.line(frame, origin, z_end, (255, 0, 0), thickness, cv2.LINE_AA)
     
-    # Cerchio all'origine (BIANCO)
     cv2.circle(frame, origin, 8, (255, 255, 255), -1)
     cv2.circle(frame, origin, 10, (0, 0, 0), 2)
     
-    # Etichette con background per leggibilità
     def draw_label_with_bg(img, text, pos, color):
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = 0.8
@@ -347,13 +117,11 @@ def draw_3d_axes(
         
         (tw, th), _ = cv2.getTextSize(text, font, font_scale, thickness)
         
-        # Background nero
         cv2.rectangle(img, 
                      (pos[0] - 2, pos[1] - th - 2),
                      (pos[0] + tw + 2, pos[1] + 2),
                      (0, 0, 0), -1)
         
-        # Testo
         cv2.putText(img, text, pos, font, font_scale, color, thickness, cv2.LINE_AA)
     
     draw_label_with_bg(frame, 'X (forward)', x_end, (0, 0, 255))
@@ -387,97 +155,498 @@ def draw_bbox_3d(frame: np.ndarray,
     for i, j in vertical_edges:
         cv2.line(frame, tuple(pts[i]), tuple(pts[j]), color, thickness)
     
-    # Posteriore evidenziato (ROSSO)
+    # Posteriore evidenziato
     rear_color = (0, 0, 255)
     cv2.line(frame, tuple(pts[0]), tuple(pts[1]), rear_color, thickness + 2)
     cv2.line(frame, tuple(pts[4]), tuple(pts[5]), rear_color, thickness + 2)
 
-def draw_bbox_with_validation(
-    frame: np.ndarray,
-    bbox_2d: np.ndarray,
-    measured_lights: np.ndarray,
-    theoretical_lights: Optional[np.ndarray],
-    is_aligned: bool,
-    alignment_error: float,
-    color: Tuple[int, int, int] = (0, 255, 0),
-    thickness: int = 2
-) -> None:
-    """
-    Disegna bbox CON validazione visiva.
-    
-    Args:
-        frame: Frame da modificare
-        bbox_2d: Punti bbox proiettati (8, 2)
-        measured_lights: Fari misurati [[L, R]]
-        theoretical_lights: Fari teorici sulla bbox
-        is_aligned: Se bbox è ben allineata
-        alignment_error: Errore in pixel
-        color: Colore bbox
-        thickness: Spessore
-    """
-    if bbox_2d is None:
+
+def draw_dashed_line(frame, pt1, pt2, color, thickness=1, gap=10):
+    """Disegna linea tratteggiata."""
+    dist = np.linalg.norm(np.array(pt2) - np.array(pt1))
+    if dist < 1:
         return
     
-    # Disegna bbox normale
-    draw_bbox_3d(frame, bbox_2d, color, thickness)
+    pts = []
+    for i in np.arange(0, dist, gap):
+        r = i / dist
+        x = int((1 - r) * pt1[0] + r * pt2[0])
+        y = int((1 - r) * pt1[1] + r * pt2[1])
+        pts.append((x, y))
     
-    # ✅ CROCI VIOLA: dove DOVREBBERO stare i fari sulla bbox
-    if theoretical_lights is not None:
-        for i, light_pos in enumerate(theoretical_lights):
-            x, y = int(light_pos[0]), int(light_pos[1])
-            
-            # Croce viola grande
-            size = 15
-            cv2.line(frame, (x - size, y), (x + size, y), (255, 0, 255), 3)
-            cv2.line(frame, (x, y - size), (x, y + size), (255, 0, 255), 3)
-            
-            # Cerchio viola
-            cv2.circle(frame, (x, y), 8, (255, 0, 255), 2)
-            
-            # Etichetta
-            label = "TH-L" if i == 0 else "TH-R"
-            cv2.putText(frame, label, (x + 20, y - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
-    
-    # ✅ LINEE DI CONNESSIONE: da fari misurati a teorici
-    if theoretical_lights is not None and measured_lights is not None:
-        for i in range(2):
-            pt_meas = tuple(measured_lights[i].astype(int))
-            pt_theo = tuple(theoretical_lights[i].astype(int))
-            
-            # Linea tratteggiata
-            color_line = (0, 255, 0) if is_aligned else (0, 0, 255)
-            draw_dashed_line(frame, pt_meas, pt_theo, color_line, 2, gap=5)
-    
-    # ✅ INFO ALLINEAMENTO
-    status_text = f"Alignment: {'OK' if is_aligned else 'BAD'} ({alignment_error:.1f}px)"
-    status_color = (0, 255, 0) if is_aligned else (0, 0, 255)
-    
-    cv2.putText(frame, status_text, (10, frame.shape[0] - 110),
-               cv2.FONT_HERSHEY_SIMPLEX, 0.6, status_color, 2)
-    
-    if not is_aligned:
-        cv2.putText(frame, "⚠️ BBOX MISALIGNED!", (10, frame.shape[0] - 85),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-        
+    for i in range(0, len(pts) - 1, 2):
+        if i + 1 < len(pts):
+            cv2.line(frame, pts[i], pts[i+1], color, thickness, cv2.LINE_AA)
+
 
 class DrawUtils:
-    """Classe helper per compatibilità."""
+    """Classe helper per visualizzazione - GEOMETRIA CORRETTA."""
     
     @staticmethod
-    def draw_tracked_points(frame, points, color=(0, 255, 0), radius=5, 
-                           thickness=-1, labels=True):
-        frame_copy = frame.copy()
-        left, right = points
+    def extend_line_bidirectional(frame, p1, p2, vp, color, thickness=2, gap=8, length_multiplier=2.5):
+        """
+        GEOMETRIA CORRETTA: Prolunga in ENTRAMBE le direzioni.
         
-        cv2.circle(frame_copy, left, radius, color, thickness)
-        cv2.circle(frame_copy, right, radius, color, thickness)
-        cv2.line(frame_copy, left, right, color, 2)
+        - Linea SOLIDA: p1 -> p2
+        - Linea TRATTEGGIATA: p2 -> avanti (direzione p1→p2)
+        - Linea TRATTEGGIATA: p1 -> indietro (direzione opposta)
         
-        if labels:
-            cv2.putText(frame_copy, 'L', (left[0] - 20, left[1] - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(frame_copy, 'R', (right[0] + 10, right[1] - 10),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        Args:
+            p1, p2: Punti del segmento originale
+            vp: Vanishing point (non usato, ma mantenuto per compatibilità)
+            color: Colore
+            thickness: Spessore
+            gap: Gap linea tratteggiata
+            length_multiplier: Quanto estendere
+        """
+        p1 = np.array(p1, dtype=float)
+        p2 = np.array(p2, dtype=float)
         
-        return frame_copy
+        # ===== LINEA SOLIDA p1 -> p2 =====
+        cv2.line(frame, tuple(map(int, p1)), tuple(map(int, p2)), 
+                color, thickness, cv2.LINE_AA)
+        
+        # ===== DIREZIONE: da p1 verso p2 =====
+        direction = p2 - p1
+        length = np.linalg.norm(direction)
+        
+        if length < 1:
+            return
+        
+        direction = direction / length  # Normalizza
+        
+        # ===== ESTENSIONE AVANTI: da p2 nella direzione p1→p2 =====
+        extension_length = length * length_multiplier
+        end_point_forward = p2 + direction * extension_length
+        
+        draw_dashed_line(frame, tuple(map(int, p2)), tuple(map(int, end_point_forward)),
+                        color, thickness, gap)
+        
+        # ===== ESTENSIONE INDIETRO: da p1 nella direzione opposta =====
+        end_point_backward = p1 - direction * extension_length
+        
+        draw_dashed_line(frame, tuple(map(int, p1)), tuple(map(int, end_point_backward)),
+                        color, thickness, gap)
+    
+    @staticmethod
+    def draw_vanishing_points_multifeature(
+        frame: np.ndarray,
+        features_t1: dict,
+        features_t2: dict,
+        plate_bottom_t1: Optional[np.ndarray],
+        plate_bottom_t2: Optional[np.ndarray],
+        Vx: np.ndarray,
+        Vy: np.ndarray,
+        show_lines: bool = True,
+        show_labels: bool = True
+    ):
+        """
+        Disegna vanishing points con GEOMETRIA CORRETTA.
+        
+        GEOMETRIA:
+        - Segmenti orizzontali (L-R) prolungati → convergono a Vx
+        - Traiettorie verticali (L1-L2, R1-R2) prolungate → convergono a Vy
+        """
+        if Vx is None or Vy is None:
+            return
+        
+        h, w = frame.shape[:2]
+        Vx_int = tuple(map(int, Vx))
+        Vy_int = tuple(map(int, Vy))
+        
+        # Colori per features
+        colors = {
+            'top': (255, 255, 0),      # Ciano
+            'outer': (0, 255, 0),      # Verde
+            'plate_bottom': (255, 0, 255)  # Magenta
+        }
+        
+        # Colori per traiettorie
+        trajectory_colors = {
+            'top': (128, 128, 255),     # Blu chiaro
+            'outer': (255, 0, 0),       # Blu scuro
+        }
+        
+        if show_lines:
+            # ===== Vx: SEGMENTI ORIZZONTALI (L-R nello stesso frame) =====
+            for feature_name in ['top', 'outer']:
+                if feature_name not in features_t1 or feature_name not in features_t2:
+                    continue
+                
+                color = colors[feature_name]
+                pts1 = features_t1[feature_name]
+                pts2 = features_t2[feature_name]
+                
+                L1, R1 = pts1[0], pts1[1]
+                L2, R2 = pts2[0], pts2[1]
+                
+                # Frame t: L1-R1 bidirezionale
+                DrawUtils.extend_line_bidirectional(frame, L1, R1, Vx_int, color, 1, gap=8, length_multiplier=2.5)
+                
+                # Frame t+1: L2-R2 bidirezionale (più spesso)
+                DrawUtils.extend_line_bidirectional(frame, L2, R2, Vx_int, color, 2, gap=8, length_multiplier=2.5)
+            
+            # ===== PLATE BOTTOM → Vx =====
+            if plate_bottom_t1 is not None and plate_bottom_t2 is not None:
+                color = colors['plate_bottom']
+                
+                BL1, BR1 = plate_bottom_t1[0], plate_bottom_t1[1]
+                BL2, BR2 = plate_bottom_t2[0], plate_bottom_t2[1]
+                
+                # Disegna punti
+                for pt in [BL1, BR1]:
+                    cv2.circle(frame, tuple(map(int, pt)), 4, color, -1)
+                
+                for pt in [BL2, BR2]:
+                    cv2.circle(frame, tuple(map(int, pt)), 6, color, -1)
+                    cv2.circle(frame, tuple(map(int, pt)), 8, (255, 255, 255), 2)
+                
+                # Segmenti bidirezionali
+                DrawUtils.extend_line_bidirectional(frame, BL1, BR1, Vx_int, color, 2, gap=8, length_multiplier=2.0)
+                DrawUtils.extend_line_bidirectional(frame, BL2, BR2, Vx_int, color, 3, gap=8, length_multiplier=2.0)
+                
+                # Label
+                mid_x = int((BL2[0] + BR2[0]) / 2)
+                mid_y = int((BL2[1] + BR2[1]) / 2)
+                cv2.putText(frame, "PLATE", (mid_x - 30, mid_y + 20),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            
+            # ===== Vy: TRAIETTORIE (L1→L2, R1→R2 tra frames) =====
+            for feature_name in ['top', 'outer']:
+                if feature_name not in features_t1 or feature_name not in features_t2:
+                    continue
+                
+                pts1 = features_t1[feature_name]
+                pts2 = features_t2[feature_name]
+                
+                L1, R1 = pts1[0], pts1[1]
+                L2, R2 = pts2[0], pts2[1]
+                
+                traj_color = trajectory_colors[feature_name]
+                
+                # Traiettoria LEFT: L1→L2 bidirezionale
+                DrawUtils.extend_line_bidirectional(frame, L1, L2, Vy_int, traj_color, 2, gap=8, length_multiplier=2.0)
+                
+                # Traiettoria RIGHT: R1→R2 bidirezionale
+                DrawUtils.extend_line_bidirectional(frame, R1, R2, Vy_int, traj_color, 2, gap=8, length_multiplier=2.0)
+        
+        # ===== VANISHING POINTS =====
+        # Vx
+        if 0 <= Vx_int[0] < w and 0 <= Vx_int[1] < h:
+            cv2.circle(frame, Vx_int, 12, (0, 255, 0), -1)
+            cv2.circle(frame, Vx_int, 15, (255, 255, 255), 3)
+            if show_labels:
+                cv2.putText(frame, "Vx (lateral)", (Vx_int[0] + 20, Vx_int[1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        else:
+            cv2.putText(frame, f"Vx @ ({Vx_int[0]}, {Vx_int[1]})", (10, h - 60),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        
+        # Vy
+        if 0 <= Vy_int[0] < w and 0 <= Vy_int[1] < h:
+            cv2.circle(frame, Vy_int, 12, (255, 0, 0), -1)
+            cv2.circle(frame, Vy_int, 15, (255, 255, 255), 3)
+            if show_labels:
+                cv2.putText(frame, "Vy (motion)", (Vy_int[0] + 20, Vy_int[1] + 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+        else:
+            cv2.putText(frame, f"Vy @ ({Vy_int[0]}, {Vy_int[1]})", (10, h - 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+        
+        # ===== LEGENDA (UNA SOLA VOLTA!) =====
+        if show_labels:
+            y_offset = 100
+            legend_items = [
+                ('Lateral segments (->Vx):', None),
+                ('  top L-R', colors['top']),
+                ('  outer L-R', colors['outer']),
+                ('  plate bottom', colors['plate_bottom']),
+                ('', None),
+                ('Motion trajectories (->Vy):', None),
+                ('  top L/R', trajectory_colors['top']),
+                ('  outer L/R', trajectory_colors['outer']),
+            ]
+            
+            for name, color in legend_items:
+                if color is None:
+                    cv2.putText(frame, name, (10, y_offset + 12),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                else:
+                    cv2.rectangle(frame, (10, y_offset), (30, y_offset + 15), color, -1)
+                    cv2.putText(frame, name, (35, y_offset + 12),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                y_offset += 20
+    
+    @staticmethod
+    def create_debug_mask_frame(
+        frame: np.ndarray,
+        detector,
+        features_dict: Optional[dict],
+        plate_bottom: Optional[np.ndarray]
+    ) -> np.ndarray:
+        """
+        Debug mask: mostra processing LIVE della targa.
+        
+        MOSTRA:
+        - Maschera fari (rosso)
+        - ROI targa (giallo)
+        - Contorno processato targa (verde brillante)
+        - Punti identificati
+        """
+        h, w = frame.shape[:2]
+        debug_frame = np.zeros((h, w, 3), dtype=np.uint8)
+        
+        # ===== MASCHERA FARI =====
+        mask_lights = detector._create_red_mask(frame)
+        
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 9))
+        mask_lights = cv2.morphologyEx(mask_lights, cv2.MORPH_CLOSE, kernel)
+        mask_lights = cv2.morphologyEx(mask_lights, cv2.MORPH_OPEN, kernel)
+        
+        debug_frame[mask_lights > 0] = (0, 0, 255)  # Rosso
+        
+        # ===== PROCESSING TARGA LIVE =====
+        if features_dict and 'outer' in features_dict:
+            try:
+                from scipy import stats
+                
+                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                V = hsv[:, :, 2]
+                
+                outer_points = features_dict['outer']
+                
+                # Trova Y base dai fari
+                outer = features_dict['outer']
+
+                # ✅ FIX: USA BOTTOM, NON OUTER!
+                bottom_points = features_dict.get('bottom')
+                if bottom_points is None:
+                    bottom_points = outer  # Fallback
+                
+                fari_bottom_y = int(max(bottom_points[0][1], bottom_points[1][1]))
+                scale = abs(outer[1][0] - outer[0][0])  # lights width
+                
+                # ✅ FIX: ROI COERENTE CON DETECTOR
+                x1 = int(min(outer[0][0], outer[1][0]))
+                x2 = int(max(outer[0][0], outer[1][0]))
+                
+                margin_x = int(scale * 0.10)  # 10% margine
+                x1 = max(0, x1 - margin_x)
+                x2 = min(w - 1, x2 + margin_x)
+                
+                # ✅ FIX: RANGE VERTICALE CORRETTO (0.15-0.45)
+                y1 = int(fari_bottom_y + 0.15 * scale)
+                y2 = int(fari_bottom_y + 0.45 * scale)
+                
+                # Clamp
+                y1 = max(0, y1)
+                y2 = min(h - 1, y2)
+
+                # Disegna ROI box
+                cv2.rectangle(debug_frame, (x1, y1), (x2, y2), (255, 255, 0), 2)
+                cv2.putText(
+                    debug_frame,
+                    "ROI TARGA",
+                    (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 255, 0),
+                    2
+                )
+
+                roi = frame[y1:y2, x1:x2]
+
+                if roi.size > 0:
+                    # Processing completo come Jupiter
+                    hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+                    V_roi = hsv_roi[:, :, 2]
+
+                    mask_plate = cv2.inRange(V_roi, detector.v_plate_low, detector.v_plate_high)
+                    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 3))
+                    mask_plate = cv2.morphologyEx(mask_plate, cv2.MORPH_CLOSE, kernel)
+
+                    contours_plate, _ = cv2.findContours(
+                        mask_plate,
+                        cv2.RETR_EXTERNAL,
+                        cv2.CHAIN_APPROX_SIMPLE
+                    )
+
+                    if contours_plate:
+                        largest = max(contours_plate, key=cv2.contourArea)
+                        mask_cluster = np.zeros_like(mask_plate)
+                        cv2.drawContours(mask_cluster, [largest], -1, 255, -1)
+
+                        ys, xs = np.where(mask_cluster > 0)
+                        if len(xs) > 0:
+                            x_min, x_max = xs.min(), xs.max()
+                            y_min, y_max = ys.min(), ys.max()
+
+                            pad_x = int(0.25 * (x_max - x_min))
+                            pad_y = int(0.40 * (y_max - y_min))
+
+                            roi_x_min = max(0, x_min - pad_x)
+                            roi_x_max = min(roi.shape[1], x_max + pad_x)
+                            roi_y_min = max(0, y_min - pad_y)
+                            roi_y_max = min(roi.shape[0], y_max + pad_y)
+
+                            roi_plate = roi[roi_y_min:roi_y_max, roi_x_min:roi_x_max]
+
+                            if roi_plate.size > 0:
+                                # Gradient
+                                gray_plate = cv2.cvtColor(roi_plate, cv2.COLOR_BGR2GRAY)
+                                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                                gray_plate = clahe.apply(gray_plate)
+                                gray_plate = cv2.GaussianBlur(gray_plate, (7, 7), 0)
+
+                                kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+                                gradient = cv2.morphologyEx(gray_plate, cv2.MORPH_GRADIENT, kernel)
+
+                                hsv_plate = cv2.cvtColor(roi_plate, cv2.COLOR_BGR2HSV)
+                                V_plate = hsv_plate[:, :, 2]
+                                mask_light = cv2.inRange(
+                                    V_plate,
+                                    detector.v_plate_low,
+                                    detector.v_plate_high
+                                )
+
+                                kernel_expand = cv2.getStructuringElement(
+                                    cv2.MORPH_RECT, (20, 15)
+                                )
+                                mask_light_expanded = cv2.dilate(
+                                    mask_light, kernel_expand, iterations=2
+                                )
+
+                                _, gradient_binary = cv2.threshold(
+                                    gradient, 0, 255,
+                                    cv2.THRESH_BINARY + cv2.THRESH_OTSU
+                                )
+
+                                gradient_filtered = cv2.bitwise_and(
+                                    gradient_binary, mask_light_expanded
+                                )
+
+                                kernel_close_h = cv2.getStructuringElement(
+                                    cv2.MORPH_RECT, (2, 1)
+                                )
+                                kernel_close_v = cv2.getStructuringElement(
+                                    cv2.MORPH_RECT, (1, 2)
+                                )
+
+                                gradient_closed_h = cv2.morphologyEx(
+                                    gradient_filtered,
+                                    cv2.MORPH_CLOSE,
+                                    kernel_close_h
+                                )
+                                gradient_closed_v = cv2.morphologyEx(
+                                    gradient_filtered,
+                                    cv2.MORPH_CLOSE,
+                                    kernel_close_v
+                                )
+
+                                gradient_closed = cv2.bitwise_or(
+                                    gradient_closed_h,
+                                    gradient_closed_v
+                                )
+
+                                # CONTORNO FINALE
+                                contours_grad, _ = cv2.findContours(
+                                    gradient_closed,
+                                    cv2.RETR_EXTERNAL,
+                                    cv2.CHAIN_APPROX_SIMPLE
+                                )
+
+                                if contours_grad:
+                                    main_contour = max(
+                                        contours_grad, key=cv2.contourArea
+                                    )
+
+                                    # Coordinate globali
+                                    global_contour = main_contour.copy()
+                                    global_contour[:, 0, 0] += roi_x_min + x1
+                                    global_contour[:, 0, 1] += roi_y_min + y1
+
+                                    # VERDE BRILLANTE
+                                    cv2.drawContours(
+                                        debug_frame,
+                                        [global_contour],
+                                        -1,
+                                        (0, 255, 0),
+                                        2
+                                    )
+
+            
+            except Exception as e:
+                print(f"Debug mask error: {e}")
+        
+        # ===== PUNTI IDENTIFICATI =====
+        if features_dict:
+            if 'top' in features_dict:
+                for pt in features_dict['top']:
+                    cv2.circle(debug_frame, tuple(map(int, pt)), 8, (255, 255, 0), -1)
+                    cv2.circle(debug_frame, tuple(map(int, pt)), 10, (255, 255, 255), 2)
+            
+            if 'outer' in features_dict:
+                for pt in features_dict['outer']:
+                    cv2.circle(debug_frame, tuple(map(int, pt)), 10, (0, 255, 0), -1)
+                    cv2.circle(debug_frame, tuple(map(int, pt)), 12, (255, 255, 255), 2)
+        
+        # Plate bottom
+        if plate_bottom is not None:
+            for pt in plate_bottom:
+                cv2.circle(debug_frame, tuple(map(int, pt)), 12, (255, 0, 255), -1)
+                cv2.circle(debug_frame, tuple(map(int, pt)), 14, (255, 255, 255), 2)
+            
+            BL, BR = plate_bottom[0], plate_bottom[1]
+            cv2.line(debug_frame, tuple(map(int, BL)), tuple(map(int, BR)), 
+                    (255, 0, 255), 3, cv2.LINE_AA)
+        
+        # ===== LEGENDA =====
+        cv2.putText(debug_frame, "DEBUG MASK VIEW", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+        
+        legend_y = 60
+        legend_items = [
+            ("Red: Light mask", (0, 0, 255)),
+            ("Green: Plate contour", (0, 255, 0)),
+            ("Cyan: Top", (255, 255, 0)),
+            ("Green: Outer (ref)", (0, 255, 0)),
+            ("Yellow: Bottom", (0, 255, 255)),
+            ("Magenta: Plate Bottom", (255, 0, 255))
+        ]
+        
+        for name, color in legend_items:
+            cv2.circle(debug_frame, (20, legend_y), 6, color, -1)
+            cv2.putText(debug_frame, name, (35, legend_y + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            legend_y += 25
+        
+        return debug_frame
+    
+# BACKWARD COMPATIBILITY
+def draw_vanishing_points_complete(
+    frame: np.ndarray,
+    lights_frame1: Optional[np.ndarray],
+    lights_frame2: Optional[np.ndarray],
+    Vx: Optional[np.ndarray],
+    Vy: Optional[np.ndarray],
+    dot_product: Optional[float] = None,
+    show_lines: bool = True,
+    show_labels: bool = True
+) -> None:
+    """BACKWARD COMPATIBILITY wrapper."""
+    if lights_frame1 is None or lights_frame2 is None or Vx is None or Vy is None:
+        return
+    
+    features_t1 = {'outer': lights_frame1}
+    features_t2 = {'outer': lights_frame2}
+    
+    DrawUtils.draw_vanishing_points_multifeature(
+        frame, features_t1, features_t2, None, None, Vx, Vy, show_lines, show_labels
+    )
+    
+def draw_plate_roi(frame, roi):
+    x1, y1, x2, y2 = roi
+    cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 255), 2)
+    cv2.putText(frame, "PLATE ROI", (x1, y1 - 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
+
