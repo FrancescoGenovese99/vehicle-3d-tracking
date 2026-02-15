@@ -35,14 +35,14 @@ class AdvancedDetector:
     def __init__(self, config: Dict = None):
         # ===== PARAMETRI HSV ROSSO (FARI) =====
         self.red_h_lower1 = 0
-        self.red_h_upper1 = 10
+        self.red_h_upper1 = 18
         self.red_h_lower2 = 170
         self.red_h_upper2 = 180
         
-        self.red_s_lower = 100
+        self.red_s_lower = 135
         self.red_s_upper = 255
         
-        self.red_v_lower = 210
+        self.red_v_lower = 190
         self.red_v_upper = 255
         
         # ===== PARAMETRI BLOB DETECTION =====
@@ -175,16 +175,50 @@ class AdvancedDetector:
         features = {}
         
         top_idx = contour[:, 0, 1].argmin()
-        features['top'] = tuple(contour[top_idx, 0])
+        top_point = tuple(contour[top_idx, 0])
+        features['top'] = top_point
+
+        print(f"🔴 TOP raw pixel: {top_point}")
         
-        bottom_idx = contour[:, 0, 1].argmax()
-        features['bottom'] = tuple(contour[bottom_idx, 0])
+        features['bottom'] = bottom = self._get_robust_bottom_point(contour)
         
         features['outer'] = self._extract_outer_point_with_canny(
             frame, contour, (x, y, w, h), is_left
         )
         
         return features
+    
+    
+    def _get_robust_bottom_point(self, contour: np.ndarray) -> Tuple[int, int]:
+        """
+        FIX CRITICO: 90° percentile invece di argmax.
+        
+        MOTIVO: 
+        - argmax prende il pixel più basso (inclusi riflessi)
+        - 90° percentile taglia il 10% inferiore (= riflesso)
+        - Media dei punti nel 90-100° percentile = base stabile del fanale
+        """
+        points = contour[:, 0, :]
+        sorted_by_y = points[points[:, 1].argsort()]
+        
+        # 90° percentile: ignora ultimi 10% (riflesso asfalto/paraurti)
+        idx_limit = int(len(sorted_by_y) * 0.90)
+        relevant_points = sorted_by_y[idx_limit:]
+        print(f"🟢 BOTTOM candidate pixels ({len(relevant_points)} pts):")
+        for pt in relevant_points[:10]:   # stampa solo primi 10 per non esplodere log
+            print(f"   {tuple(pt)}")
+        
+        if len(relevant_points) == 0:
+            relevant_points = sorted_by_y[-5:]  # Fallback sicuro
+        
+        # Media X e Y per stabilità
+        avg_x = int(np.mean(relevant_points[:, 0]))
+        avg_y = int(np.mean(relevant_points[:, 1]))
+        
+        bottom_point = (avg_x, avg_y)
+        print(f"🟢 BOTTOM averaged point: {bottom_point}")
+        
+        return (avg_x, avg_y)
     
     def detect_tail_lights_multifeature(self, frame: np.ndarray) -> Optional[Dict[str, np.ndarray]]:
         """Rileva fari multi-feature."""
@@ -197,9 +231,9 @@ class AdvancedDetector:
         
         mask = self._create_red_mask(frame)
         
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 9))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        mask = cv2.erode(mask, kernel, iterations=1)
+        mask = cv2.dilate(mask, kernel, iterations=2)
         
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
@@ -662,6 +696,16 @@ class AdvancedDetector:
             xs = [x for x, y in plate_corners.values()]
             ys = [y for x, y in plate_corners.values()]
             plate_center = (int(np.mean(xs)), int(np.mean(ys)))
+            
+            curr_p = np.array(plate_center)
+            if len(self.plate_center_history) > 0:
+                prev_p = self.plate_center_history[-1]
+                dist = np.linalg.norm(curr_p - prev_p)
+                
+                # Se la targa salta più di 50 pixel in un frame, è un errore di detection
+                if dist > 50: 
+                    plate_corners = None # Ignora la detection errata
+                    confidence = 0.1
             
             # Aggiorna history
             self.plate_center_history.append(np.array(plate_center))

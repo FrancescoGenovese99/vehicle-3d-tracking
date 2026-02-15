@@ -20,10 +20,9 @@ vehicle:
   dimensions:
     length: 3.70
     width: 1.74
-    width_with_mirrors: 1.96
     height: 1.525
     wheelbase: 2.43
-    front_overhang: 0.73
+    front_overhang: 0.806
     rear_overhang: 0.54
     ground_clearance: 0.132
 
@@ -48,34 +47,57 @@ vehicle:
     distance_between_outer_points: 1.42   # distanza reale tra i punti esterni
 
     left:
-      top:    [ 0.00,  0.51, 1.34 ]   # punto alto faro sinistro
-      outer:  [ -0.30, 0.71, 1.04 ]   # punto più esterno faro sinistro
-
+      outer:  [-0.27,  0.70, 1.05]  # Punto più esterno SX
+      top:    [-0.00,  0.50, 1.30]  # Punto più alto SX
+      bottom: [-0.33,  0.50, 0.82]  # Punto più basso SX 
     right:
-      top:    [ 0.00, -0.51, 1.34 ]   # punto alto faro destro
-      outer:  [ -0.30, -0.71, 1.04 ]  # punto più esterno faro destro
+      outer:  [-0.27, -0.70, 1.05]  # Punto più esterno DX
+      top:    [-0.00, -0.50, 1.30]  # Punto più alto DX
+      bottom: [-0.33, -0.50, 0.82]  # Punto più basso DX
 
+
+
+
+
+
+
+   # ----------------------------------------------------------
+  # Punti di riferimento per PnP (metri)
+  # X: avanti, Y: sinistra, Z: su
+  # Il retro dell'auto è a X = -0.54 (rear_overhang)
   # ----------------------------------------------------------
-  # FARI ANTERIORI (opzionali, non usati nei task attuali)
-  # ----------------------------------------------------------
-  front_lights:
-    left:  [ 2.97,  0.65, 0.65 ]
-    right: [ 2.97, -0.65, 0.65 ]
+  pnp_points_3d:
+    light_l_outer:  [-0.27,  0.70, 1.05]   # rear edge, outer
+    light_r_outer:  [-0.27, -0.70, 1.05]   # rear edge, outer
+    light_l_top:    [-0.00,  0.50, 1.30]   # top of L-shape (more forward) 
+    light_r_top:    [-0.00, -0.50, 1.30]   # top of L-shape (more forward) 
+    light_l_bottom: [-0.33,  0.50, 0.82]   # rear edge, bottom
+    light_r_bottom: [-0.33, -0.50, 0.82]   # rear edge, bottom
+
+
 
   # ----------------------------------------------------------
   # TARGA POSTERIORE
   # ----------------------------------------------------------
+
+  plate_line_3d:
+    y_start: 0.26   # Estremità sinistra targa
+    y_end: -0.26    # Estremità destra targa
+    z: 0.40         # Altezza da terra bordo inferiore
+    x: -0.55        # Posizione X
+
+
+
   license_plate:
-    center: [ -0.27, 0.0, 0.40 ]
+    center: [ -0.55, 0.0, 0.40 ]
 
     width: 0.52
     height: 0.11
+    center_ground_offset: 0.45      # Altezza del centro targa da terra
 
     corners:
-      top_left:     [ -0.27,  0.26, 0.455 ]
-      top_right:    [ -0.27, -0.26, 0.455 ]
-      bottom_right: [ -0.27, -0.26, 0.345 ]
-      bottom_left:  [ -0.27,  0.26, 0.345 ]
+      bottom_left:  [-0.55,  0.26, 0.40] 
+      bottom_right: [-0.55, -0.26, 0.40]
 
     mounting: "centro portellone posteriore"
 

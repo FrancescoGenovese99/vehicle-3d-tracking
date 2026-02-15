@@ -50,44 +50,18 @@ class BBox3DProjector:
         self.width = dimensions.get('width', 1.74)
         self.height = dimensions.get('height', 1.525)
         
-        # ===== VERTICI BBOX 3D (dal YAML) =====
-        bbox_vertices = vehicle_data.get('bbox_vertices', {})
-        
+        # ===== VERTICI BBOX 3D (HARDCODED - NON FIDARTI DEL YAML) =====
         # Base (suolo, Z=0)
-        self.bottom_rear_right = np.array(
-            bbox_vertices.get('bottom_rear_right', [0.0, -0.87, 0.0]), 
-            dtype=np.float32
-        )
-        self.bottom_rear_left = np.array(
-            bbox_vertices.get('bottom_rear_left', [0.0, 0.87, 0.0]), 
-            dtype=np.float32
-        )
-        self.bottom_front_left = np.array(
-            bbox_vertices.get('bottom_front_left', [3.70, 0.87, 0.0]), 
-            dtype=np.float32
-        )
-        self.bottom_front_right = np.array(
-            bbox_vertices.get('bottom_front_right', [3.70, -0.87, 0.0]), 
-            dtype=np.float32
-        )
-        
-        # Top (tetto, Z=height)
-        self.top_rear_right = np.array(
-            bbox_vertices.get('top_rear_right', [0.0, -0.87, 1.525]), 
-            dtype=np.float32
-        )
-        self.top_rear_left = np.array(
-            bbox_vertices.get('top_rear_left', [0.0, 0.87, 1.525]), 
-            dtype=np.float32
-        )
-        self.top_front_left = np.array(
-            bbox_vertices.get('top_front_left', [3.70, 0.87, 1.525]), 
-            dtype=np.float32
-        )
-        self.top_front_right = np.array(
-            bbox_vertices.get('top_front_right', [3.70, -0.87, 1.525]), 
-            dtype=np.float32
-        )
+        self.bottom_rear_left = np.array([-0.54, 0.87, 0.0], dtype=np.float32)
+        self.bottom_rear_right = np.array([-0.54, -0.87, 0.0], dtype=np.float32)
+        self.bottom_front_left = np.array([3.16, 0.87, 0.0], dtype=np.float32)
+        self.bottom_front_right = np.array([3.16, -0.87, 0.0], dtype=np.float32)
+
+        # Top (tetto, Z=1.525)
+        self.top_rear_left = np.array([-0.54, 0.87, 1.525], dtype=np.float32)
+        self.top_rear_right = np.array([-0.54, -0.87, 1.525], dtype=np.float32)
+        self.top_front_left = np.array([3.16, 0.87, 1.525], dtype=np.float32)
+        self.top_front_right = np.array([3.16, -0.87, 1.525], dtype=np.float32)
         
         # ==========================================================
         # BBOX VERTICES - SISTEMA VEICOLO
@@ -109,12 +83,9 @@ class BBox3DProjector:
         ], dtype=np.float32)
 
         print(f"[BBox3DProjector] Initialized:")
-        print(f"  Vehicle: {self.length:.2f}m × {self.width:.2f}m × {self.height:.2f}m")
-        print(f"  BBox origin: rear axle center at ground level")
-        
-        print(f"[BBox3DProjector] Initialized:")
-        print(f"  Vehicle: {self.length:.2f}m × {self.width:.2f}m × {self.height:.2f}m")
-        print(f"  Reference: outer points at [{self.lights_x:.2f}, ±{self.lights_y:.2f}, {self.lights_z:.2f}]")
+        print(f"  Vehicle: {self.length:.2f}m x {self.width:.2f}m x {self.height:.2f}m")
+        print(f"  BBox origin: rear axle center at ground level (X-fwd, Y-left, Z-up)")
+        print(f"  Outer ref: [{self.lights_x:.2f}, +/-{self.lights_y:.2f}, {self.lights_z:.2f}]")
     
     def project_bbox(
         self,

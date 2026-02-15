@@ -46,7 +46,7 @@ def draw_motion_type_overlay(frame: np.ndarray,
     
     if motion_type == "TRANSLATION":
         bg_color = (0, 128, 0)
-    elif motion_type == "ROTATION":
+    elif motion_type == "STEERING":
         bg_color = (0, 0, 128)
     else:
         bg_color = (0, 82, 128)
@@ -59,7 +59,7 @@ def draw_motion_type_overlay(frame: np.ndarray,
     (text_w, text_h), baseline = cv2.getTextSize(text, font, font_scale, thickness)
     
     x = (w - text_w) // 2
-    y = 50
+    y = h - 20  # spostato in basso, non copre tracking info in alto
     
     overlay = frame.copy()
     
@@ -183,206 +183,173 @@ class DrawUtils:
     """Classe helper per visualizzazione - GEOMETRIA CORRETTA."""
     
     @staticmethod
-    def extend_line_bidirectional(frame, p1, p2, vp, color, thickness=2, gap=8, length_multiplier=2.5):
-        """
-        GEOMETRIA CORRETTA: Prolunga in ENTRAMBE le direzioni.
-        
-        - Linea SOLIDA: p1 -> p2
-        - Linea TRATTEGGIATA: p2 -> avanti (direzione p1→p2)
-        - Linea TRATTEGGIATA: p1 -> indietro (direzione opposta)
-        
-        Args:
-            p1, p2: Punti del segmento originale
-            vp: Vanishing point (non usato, ma mantenuto per compatibilità)
-            color: Colore
-            thickness: Spessore
-            gap: Gap linea tratteggiata
-            length_multiplier: Quanto estendere
-        """
-        p1 = np.array(p1, dtype=float)
-        p2 = np.array(p2, dtype=float)
-        
-        # ===== LINEA SOLIDA p1 -> p2 =====
-        cv2.line(frame, tuple(map(int, p1)), tuple(map(int, p2)), 
-                color, thickness, cv2.LINE_AA)
-        
-        # ===== DIREZIONE: da p1 verso p2 =====
-        direction = p2 - p1
-        length = np.linalg.norm(direction)
-        
-        if length < 1:
-            return
-        
-        direction = direction / length  # Normalizza
-        
-        # ===== ESTENSIONE AVANTI: da p2 nella direzione p1→p2 =====
-        extension_length = length * length_multiplier
-        end_point_forward = p2 + direction * extension_length
-        
-        draw_dashed_line(frame, tuple(map(int, p2)), tuple(map(int, end_point_forward)),
-                        color, thickness, gap)
-        
-        # ===== ESTENSIONE INDIETRO: da p1 nella direzione opposta =====
-        end_point_backward = p1 - direction * extension_length
-        
-        draw_dashed_line(frame, tuple(map(int, p1)), tuple(map(int, end_point_backward)),
-                        color, thickness, gap)
-    
-    @staticmethod
-    def draw_vanishing_points_multifeature(
+    def draw_vp_convergence(
         frame: np.ndarray,
-        features_t1: dict,
-        features_t2: dict,
-        plate_bottom_t1: Optional[np.ndarray],
-        plate_bottom_t2: Optional[np.ndarray],
-        Vx: np.ndarray,
-        Vy: np.ndarray,
-        show_lines: bool = True,
+        features_curr: dict,
+        features_prev: Optional[dict],
+        vx_motion: Optional[np.ndarray],
+        vy_lateral: Optional[np.ndarray],
         show_labels: bool = True
     ):
         """
-        Disegna vanishing points con GEOMETRIA CORRETTA.
+        Disegna vanishing points con linee convergenti.
         
-        GEOMETRIA:
-        - Segmenti orizzontali (L-R) prolungati → convergono a Vx
-        - Traiettorie verticali (L1-L2, R1-R2) prolungate → convergono a Vy
+        Vy (laterale): linee tra punti L-R → Vy (CIANO)
+        Vx (movimento): traiettorie t→t+1 → Vx (ARANCIONE)
+        
+        Args:
+            frame: Frame su cui disegnare
+            features_curr: Features frame corrente {'outer': [...], 'top': [...], ...}
+            features_prev: Features frame precedente (per Vx motion)
+            vx_motion: VP movimento (array [x, y] o None)
+            vy_lateral: VP laterale (array [x, y] o None)
+            show_labels: Mostra etichette VP
         """
-        if Vx is None or Vy is None:
-            return
-        
         h, w = frame.shape[:2]
-        Vx_int = tuple(map(int, Vx))
-        Vy_int = tuple(map(int, Vy))
+        overlay = frame.copy()
         
-        # Colori per features
-        colors = {
-            'top': (255, 255, 0),      # Ciano
-            'outer': (0, 255, 0),      # Verde
-            'plate_bottom': (255, 0, 255)  # Magenta
-        }
+        def clamp_vp(vp):
+            """Clamp VP a range ragionevole."""
+            if vp is None:
+                return None
+            x = np.clip(vp[0], -w*2, w*3)
+            y = np.clip(vp[1], -h*2, h*3)
+            return (int(x), int(y))
         
-        # Colori per traiettorie
-        trajectory_colors = {
-            'top': (128, 128, 255),     # Blu chiaro
-            'outer': (255, 0, 0),       # Blu scuro
-        }
+        def is_on_screen(pt, margin=100):
+            """Check se punto è visibile (con margine)."""
+            return -margin <= pt[0] <= w+margin and -margin <= pt[1] <= h+margin
         
-        if show_lines:
-            # ===== Vx: SEGMENTI ORIZZONTALI (L-R nello stesso frame) =====
-            for feature_name in ['top', 'outer']:
-                if feature_name not in features_t1 or feature_name not in features_t2:
-                    continue
-                
-                color = colors[feature_name]
-                pts1 = features_t1[feature_name]
-                pts2 = features_t2[feature_name]
-                
-                L1, R1 = pts1[0], pts1[1]
-                L2, R2 = pts2[0], pts2[1]
-                
-                # Frame t: L1-R1 bidirezionale
-                DrawUtils.extend_line_bidirectional(frame, L1, R1, Vx_int, color, 1, gap=8, length_multiplier=2.5)
-                
-                # Frame t+1: L2-R2 bidirezionale (più spesso)
-                DrawUtils.extend_line_bidirectional(frame, L2, R2, Vx_int, color, 2, gap=8, length_multiplier=2.5)
+        # ===== Vy LATERALE (CIANO) =====
+        if vy_lateral is not None:
+            vy_pt = clamp_vp(vy_lateral)
+            vy_on_screen = is_on_screen(vy_pt, margin=200)
             
-            # ===== PLATE BOTTOM → Vx =====
-            if plate_bottom_t1 is not None and plate_bottom_t2 is not None:
-                color = colors['plate_bottom']
-                
-                BL1, BR1 = plate_bottom_t1[0], plate_bottom_t1[1]
-                BL2, BR2 = plate_bottom_t2[0], plate_bottom_t2[1]
-                
-                # Disegna punti
-                for pt in [BL1, BR1]:
-                    cv2.circle(frame, tuple(map(int, pt)), 4, color, -1)
-                
-                for pt in [BL2, BR2]:
-                    cv2.circle(frame, tuple(map(int, pt)), 6, color, -1)
-                    cv2.circle(frame, tuple(map(int, pt)), 8, (255, 255, 255), 2)
-                
-                # Segmenti bidirezionali
-                DrawUtils.extend_line_bidirectional(frame, BL1, BR1, Vx_int, color, 2, gap=8, length_multiplier=2.0)
-                DrawUtils.extend_line_bidirectional(frame, BL2, BR2, Vx_int, color, 3, gap=8, length_multiplier=2.0)
-                
-                # Label
-                mid_x = int((BL2[0] + BR2[0]) / 2)
-                mid_y = int((BL2[1] + BR2[1]) / 2)
-                cv2.putText(frame, "PLATE", (mid_x - 30, mid_y + 20),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            color_vy = (255, 220, 0)  # Ciano
             
-            # ===== Vy: TRAIETTORIE (L1→L2, R1→R2 tra frames) =====
-            for feature_name in ['top', 'outer']:
-                if feature_name not in features_t1 or feature_name not in features_t2:
-                    continue
-                
-                pts1 = features_t1[feature_name]
-                pts2 = features_t2[feature_name]
-                
-                L1, R1 = pts1[0], pts1[1]
-                L2, R2 = pts2[0], pts2[1]
-                
-                traj_color = trajectory_colors[feature_name]
-                
-                # Traiettoria LEFT: L1→L2 bidirezionale
-                DrawUtils.extend_line_bidirectional(frame, L1, L2, Vy_int, traj_color, 2, gap=8, length_multiplier=2.0)
-                
-                # Traiettoria RIGHT: R1→R2 bidirezionale
-                DrawUtils.extend_line_bidirectional(frame, R1, R2, Vy_int, traj_color, 2, gap=8, length_multiplier=2.0)
-        
-        # ===== VANISHING POINTS =====
-        # Vx
-        if 0 <= Vx_int[0] < w and 0 <= Vx_int[1] < h:
-            cv2.circle(frame, Vx_int, 12, (0, 255, 0), -1)
-            cv2.circle(frame, Vx_int, 15, (255, 255, 255), 3)
-            if show_labels:
-                cv2.putText(frame, "Vx (lateral)", (Vx_int[0] + 20, Vx_int[1] - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        else:
-            cv2.putText(frame, f"Vx @ ({Vx_int[0]}, {Vx_int[1]})", (10, h - 60),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-        
-        # Vy
-        if 0 <= Vy_int[0] < w and 0 <= Vy_int[1] < h:
-            cv2.circle(frame, Vy_int, 12, (255, 0, 0), -1)
-            cv2.circle(frame, Vy_int, 15, (255, 255, 255), 3)
-            if show_labels:
-                cv2.putText(frame, "Vy (motion)", (Vy_int[0] + 20, Vy_int[1] + 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-        else:
-            cv2.putText(frame, f"Vy @ ({Vy_int[0]}, {Vy_int[1]})", (10, h - 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-        
-        # ===== LEGENDA (UNA SOLA VOLTA!) =====
-        if show_labels:
-            y_offset = 100
-            legend_items = [
-                ('Lateral segments (->Vx):', None),
-                ('  top L-R', colors['top']),
-                ('  outer L-R', colors['outer']),
-                ('  plate bottom', colors['plate_bottom']),
-                ('', None),
-                ('Motion trajectories (->Vy):', None),
-                ('  top L/R', trajectory_colors['top']),
-                ('  outer L/R', trajectory_colors['outer']),
-            ]
+            # Linee da coppie L-R → Vy
+            pairs = []
+            if 'outer' in features_curr:
+                o = features_curr['outer']
+                if len(o) == 2:
+                    pairs.append((o[0], o[1], 'outer'))
             
-            for name, color in legend_items:
-                if color is None:
-                    cv2.putText(frame, name, (10, y_offset + 12),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                else:
-                    cv2.rectangle(frame, (10, y_offset), (30, y_offset + 15), color, -1)
-                    cv2.putText(frame, name, (35, y_offset + 12),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-                y_offset += 20
+            if 'top' in features_curr:
+                t = features_curr['top']
+                if len(t) == 2:
+                    pairs.append((t[0], t[1], 'top'))
+            
+            if 'plate_bottom' in features_curr:
+                pb = features_curr['plate_bottom']
+                if len(pb) == 2:
+                    pairs.append((pb[0], pb[1], 'plate'))
+            
+            for pL, pR, name in pairs:
+                pL_int = (int(pL[0]), int(pL[1]))
+                pR_int = (int(pR[0]), int(pR[1]))
+                
+                # Linea solida tra L e R
+                cv2.line(overlay, pL_int, pR_int, color_vy, 2, cv2.LINE_AA)
+                
+                # Linee tratteggiate → Vy
+                if vy_on_screen:
+                    draw_dashed_line(overlay, pL_int, vy_pt, color_vy, 1, gap=8)
+                    draw_dashed_line(overlay, pR_int, vy_pt, color_vy, 1, gap=8)
+            
+            # Disegna Vy point
+            if vy_on_screen:
+                cv2.circle(overlay, vy_pt, 12, color_vy, -1)
+                cv2.circle(overlay, vy_pt, 15, (255, 255, 255), 2)
+                if show_labels:
+                    cv2.putText(overlay, "Vy (lateral)", 
+                               (vy_pt[0] + 20, vy_pt[1] - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_vy, 2, cv2.LINE_AA)
+            else:
+                # Fuori schermo: mostra freccia
+                center = np.array([w/2, h/2])
+                direction = np.array(vy_pt, dtype=float) - center
+                norm = np.linalg.norm(direction)
+                if norm > 1:
+                    direction /= norm
+                    arrow_end = (center + direction * 80).astype(int)
+                    cv2.arrowedLine(overlay, tuple(center.astype(int)),
+                                   tuple(arrow_end), color_vy, 3, tipLength=0.3)
+                cv2.putText(overlay, f"Vy→({int(vy_lateral[0])},{int(vy_lateral[1])})",
+                           (10, h - 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_vy, 2)
+        
+        # ===== Vx MOVIMENTO (ARANCIONE) =====
+        if vx_motion is not None and features_prev is not None:
+            vx_pt = clamp_vp(vx_motion)
+            vx_on_screen = is_on_screen(vx_pt, margin=200)
+            
+            color_vx = (0, 140, 255)  # Arancione
+            
+            # Linee da traiettorie t→t+1 → Vx
+            trajectories = []
+            
+            for key in ['outer', 'top']:
+                if key in features_curr and key in features_prev:
+                    curr = features_curr[key]
+                    prev = features_prev[key]
+                    
+                    for i in range(min(len(curr), len(prev))):
+                        p_prev = (int(prev[i][0]), int(prev[i][1]))
+                        p_curr = (int(curr[i][0]), int(curr[i][1]))
+                        
+                        # Check movimento minimo
+                        movement = np.linalg.norm(np.array(p_curr) - np.array(p_prev))
+                        if movement < 1.0:
+                            continue
+                        
+                        trajectories.append((p_prev, p_curr, key, i))
+            
+            # Disegna traiettorie
+            for p_prev, p_curr, key, idx in trajectories:
+                # Freccia da prev → curr
+                cv2.arrowedLine(overlay, p_prev, p_curr, color_vx, 2, 
+                               tipLength=0.2, line_type=cv2.LINE_AA)
+                
+                # Linea tratteggiata → Vx
+                if vx_on_screen:
+                    draw_dashed_line(overlay, p_curr, vx_pt, color_vx, 1, gap=8)
+            
+            # Disegna Vx point
+            if vx_on_screen:
+                cv2.circle(overlay, vx_pt, 12, color_vx, -1)
+                cv2.circle(overlay, vx_pt, 15, (255, 255, 255), 2)
+                if show_labels:
+                    cv2.putText(overlay, "Vx (motion)", 
+                               (vx_pt[0] + 20, vx_pt[1] + 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_vx, 2, cv2.LINE_AA)
+            else:
+                # Fuori schermo: mostra freccia
+                center = np.array([w/2, h/2])
+                direction = np.array(vx_pt, dtype=float) - center
+                norm = np.linalg.norm(direction)
+                if norm > 1:
+                    direction /= norm
+                    arrow_end = (center + direction * 80).astype(int)
+                    cv2.arrowedLine(overlay, tuple(center.astype(int)),
+                                   tuple(arrow_end), color_vx, 3, tipLength=0.3)
+                cv2.putText(overlay, f"Vx→({int(vx_motion[0])},{int(vx_motion[1])})",
+                           (10, h - 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_vx, 2)
+        
+        # Blend semitrasparente
+        cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
+        
+        
     
     @staticmethod
     def create_debug_mask_frame(
         frame: np.ndarray,
         detector,
         features_dict: Optional[dict],
-        plate_bottom: Optional[np.ndarray]
+        plate_bottom: Optional[np.ndarray],
+        rvec: Optional[np.ndarray] = None,
+        tvec: Optional[np.ndarray] = None,
+        camera_matrix: Optional[np.ndarray] = None,
+        dist_coeffs: Optional[np.ndarray] = None,
+        frame_idx: int = 0  # ← NUOVO PARAMETRO
     ) -> np.ndarray:
         """
         Debug mask: mostra processing LIVE della targa.
@@ -391,7 +358,9 @@ class DrawUtils:
         - Maschera fari (rosso)
         - ROI targa (giallo)
         - Contorno processato targa (verde brillante)
-        - Punti identificati
+        - Punti identificati (top, outer, bottom)
+        - Plate bottom (BL, BR) - SOLO bordo inferiore
+        - Origine sistema riferimento 3D (tra gomme posteriori a terra)
         """
         h, w = frame.shape[:2]
         debug_frame = np.zeros((h, w, 3), dtype=np.uint8)
@@ -578,40 +547,127 @@ class DrawUtils:
             except Exception as e:
                 print(f"Debug mask error: {e}")
         
-        # ===== PUNTI IDENTIFICATI =====
+        # ===== CALCOLA ORIGINE 3D (TRA GOMME POSTERIORI) =====
+        origin_3d_projected = None
+        if rvec is not None and tvec is not None and camera_matrix is not None:
+            try:
+                # Punto origine del sistema di riferimento veicolo [0, 0, 0]
+                # (tra le gomme posteriori a terra)
+                origin_3d = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
+                
+                # Proietta sul piano immagine
+                projected, _ = cv2.projectPoints(
+                    origin_3d, rvec, tvec, camera_matrix, 
+                    dist_coeffs if dist_coeffs is not None else np.zeros(5)
+                )
+                
+                origin_3d_projected = tuple(map(int, projected[0][0]))
+                
+            except Exception as e:
+                print(f"Origin projection error: {e}")
+        
+        # ===== PUNTI IDENTIFICATI (FARI) =====
         if features_dict:
+            # Top = ciano
             if 'top' in features_dict:
                 for pt in features_dict['top']:
                     cv2.circle(debug_frame, tuple(map(int, pt)), 8, (255, 255, 0), -1)
                     cv2.circle(debug_frame, tuple(map(int, pt)), 10, (255, 255, 255), 2)
             
+            # Outer = verde brillante (reference points)
             if 'outer' in features_dict:
                 for pt in features_dict['outer']:
                     cv2.circle(debug_frame, tuple(map(int, pt)), 10, (0, 255, 0), -1)
                     cv2.circle(debug_frame, tuple(map(int, pt)), 12, (255, 255, 255), 2)
+            
+            # Bottom = giallo
+            if 'bottom' in features_dict:
+                for pt in features_dict['bottom']:
+                    cv2.circle(debug_frame, tuple(map(int, pt)), 8, (0, 255, 255), -1)
+                    cv2.circle(debug_frame, tuple(map(int, pt)), 10, (255, 255, 255), 2)
         
-        # Plate bottom
-        if plate_bottom is not None:
+        # ===== PLATE BOTTOM (SOLO BL, BR) =====
+        if detector.prev_plate_corners is not None:
+            plate_corners = detector.prev_plate_corners
+            BL = plate_corners['BL']
+            BR = plate_corners['BR']
+            
+            # SOLO angoli BOTTOM (BL, BR) = magenta
+            for pt in [BL, BR]:
+                cv2.circle(debug_frame, pt, 9, (255, 0, 255), -1)
+                cv2.circle(debug_frame, pt, 11, (255, 255, 255), 2)
+            
+            # SOLO linea bordo inferiore (spessa)
+            cv2.line(debug_frame, BL, BR, (255, 0, 255), 3, cv2.LINE_AA)
+            
+            # Label
+            mid_x = int((BL[0] + BR[0]) / 2)
+            mid_y = int((BL[1] + BR[1]) / 2)
+            cv2.putText(debug_frame, "PLATE", (mid_x - 30, mid_y + 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+        
+        # Fallback: usa plate_bottom se prev_plate_corners non disponibile
+        elif plate_bottom is not None:
             for pt in plate_bottom:
-                cv2.circle(debug_frame, tuple(map(int, pt)), 12, (255, 0, 255), -1)
-                cv2.circle(debug_frame, tuple(map(int, pt)), 14, (255, 255, 255), 2)
+                cv2.circle(debug_frame, tuple(map(int, pt)), 9, (255, 0, 255), -1)
+                cv2.circle(debug_frame, tuple(map(int, pt)), 11, (255, 255, 255), 2)
             
             BL, BR = plate_bottom[0], plate_bottom[1]
             cv2.line(debug_frame, tuple(map(int, BL)), tuple(map(int, BR)), 
                     (255, 0, 255), 3, cv2.LINE_AA)
         
-        # ===== LEGENDA =====
+        # ===== ORIGINE SISTEMA RIFERIMENTO 3D =====
+        if origin_3d_projected is not None:
+            # Croce arancione grande
+            cross_size = 25
+            cv2.line(debug_frame, 
+                    (origin_3d_projected[0] - cross_size, origin_3d_projected[1]), 
+                    (origin_3d_projected[0] + cross_size, origin_3d_projected[1]), 
+                    (0, 165, 255), 4, cv2.LINE_AA)
+            cv2.line(debug_frame, 
+                    (origin_3d_projected[0], origin_3d_projected[1] - cross_size), 
+                    (origin_3d_projected[0], origin_3d_projected[1] + cross_size), 
+                    (0, 165, 255), 4, cv2.LINE_AA)
+            
+            # Cerchi concentrici
+            cv2.circle(debug_frame, origin_3d_projected, 18, (0, 165, 255), 3)
+            cv2.circle(debug_frame, origin_3d_projected, 25, (255, 255, 255), 2)
+            
+            # Label con sfondo
+            label_text = "ORIGIN 3D"
+            label_pos = (origin_3d_projected[0] + 30, origin_3d_projected[1] - 15)
+            
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.7
+            thickness = 2
+            (tw, th), _ = cv2.getTextSize(label_text, font, font_scale, thickness)
+            
+            # Sfondo nero
+            cv2.rectangle(debug_frame,
+                        (label_pos[0] - 3, label_pos[1] - th - 3),
+                        (label_pos[0] + tw + 3, label_pos[1] + 3),
+                        (0, 0, 0), -1)
+            
+            cv2.putText(debug_frame, label_text, label_pos,
+                    font, font_scale, (0, 165, 255), thickness, cv2.LINE_AA)
+        
+        # ===== LEGENDA AGGIORNATA =====
         cv2.putText(debug_frame, "DEBUG MASK VIEW", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), 2)
+
+        # ===== NUOVO: FRAME COUNT =====
+        cv2.putText(debug_frame, f"Frame: {frame_idx}", (w - 200, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         
         legend_y = 60
         legend_items = [
             ("Red: Light mask", (0, 0, 255)),
             ("Green: Plate contour", (0, 255, 0)),
-            ("Cyan: Top", (255, 255, 0)),
+            ("Cyan: Top lights", (255, 255, 0)),
             ("Green: Outer (ref)", (0, 255, 0)),
-            ("Yellow: Bottom", (0, 255, 255)),
-            ("Magenta: Plate Bottom", (255, 0, 255))
+            ("Yellow: Bottom lights", (0, 255, 255)),
+            ("Magenta: Plate bottom", (255, 0, 255)),
+            ("Orange: Origin 3D", (0, 165, 255))
         ]
         
         for name, color in legend_items:
@@ -649,4 +705,3 @@ def draw_plate_roi(frame, roi):
     cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 255), 2)
     cv2.putText(frame, "PLATE ROI", (x1, y1 - 5),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
-
