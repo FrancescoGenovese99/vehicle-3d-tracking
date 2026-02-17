@@ -51,6 +51,7 @@ venv.bak/
 !data/results/poses/.gitkeep
 !data/results/bbox_3d/.gitkeep
 
+
 # Calibration (keep .npy files in calibration)
 # data/calibration/*.npy
 
@@ -69,6 +70,8 @@ Thumbs.db
 htmlcov/
 *.cover
 .hypothesis/
+data/videos/output/
+data/results/
 
 # Logs
 *.log

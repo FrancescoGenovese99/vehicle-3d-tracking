@@ -1,5 +1,5 @@
 """
-Video Writer Manager - Gestione del salvataggio video.
+video_writer.py - Thin wrapper around cv2.VideoWriter with automatic codec fallback.
 """
 
 import cv2
@@ -10,134 +10,111 @@ from typing import Optional, Tuple
 
 class VideoWriterManager:
     """
-    Gestisce la scrittura di video con OpenCV VideoWriter.
+    Manages video output via cv2.VideoWriter.
+
+    If the requested codec is unavailable on the current system, the class
+    automatically tries a list of fallback codecs (avc1 → XVID → MJPG) so
+    the pipeline keeps running without manual intervention.
+
+    Supports the context-manager protocol for safe resource cleanup::
+
+        with VideoWriterManager("out.mp4", fps=30) as writer:
+            writer.write(frame)
     """
-    
-    def __init__(self, output_path: str, 
+
+    # Codecs tried in order when the requested one fails
+    _CODEC_FALLBACKS = ['avc1', 'XVID', 'MJPG']
+
+    def __init__(self,
+                 output_path: str,
                  fps: float = 30.0,
                  frame_size: Optional[Tuple[int, int]] = None,
                  codec: str = 'mp4v'):
         """
-        Inizializza il video writer con fallback automatico su codec.
-        
         Args:
-            output_path: Path del file di output
-            fps: Frame rate del video
-            frame_size: Dimensioni frame (width, height). Se None, sarà impostato dal primo frame
-            codec: Codec fourcc ('mp4v', 'XVID', 'MJPG', ecc.)
+            output_path: Destination file path (parent directories are created automatically).
+            fps:         Output frame rate.
+            frame_size:  (width, height) in pixels. If None, inferred from the first frame.
+            codec:       Preferred FourCC codec string.
         """
         self.output_path = Path(output_path)
         self.fps = fps
         self.frame_size = frame_size
         self.codec = codec
-        
-        # Crea directory se non esiste
+
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # VideoWriter
-        self.writer = None
+
+        self.writer: Optional[cv2.VideoWriter] = None
         self.is_initialized = False
         self.frame_count = 0
-        
-        # IMPORTANTE: Se frame_size è fornito, inizializza SUBITO
+
         if frame_size is not None:
             self._initialize_writer(frame_size)
-    
+
     def _initialize_writer(self, frame_size: Tuple[int, int]):
         """
-        Inizializza il VideoWriter con fallback automatico su codec.
-        
-        Args:
-            frame_size: Dimensioni frame (width, height)
+        Tries to open a VideoWriter with the preferred codec, then falls back
+        to alternatives until one succeeds.
+
+        Raises:
+            RuntimeError: If no codec could be opened.
         """
-        # Lista codec da provare in ordine di preferenza
-        codecs_to_try = [
-            self.codec,     # Codec richiesto dall'utente
-            'avc1',         # H.264 (molto compatibile)
-            'XVID',         # Fallback 1
-            'MJPG',         # Fallback 2 (quasi sempre funziona)
-        ]
-        
-        # Rimuovi duplicati mantenendo l'ordine
-        seen = set()
-        codecs_to_try = [x for x in codecs_to_try if not (x in seen or seen.add(x))]
-        
+        codecs_to_try = [self.codec] + [c for c in self._CODEC_FALLBACKS if c != self.codec]
+
         for codec in codecs_to_try:
             try:
                 fourcc = cv2.VideoWriter_fourcc(*codec)
-                self.writer = cv2.VideoWriter(
-                    str(self.output_path),
-                    fourcc,
-                    self.fps,
-                    frame_size
-                )
-                
-                if self.writer.isOpened():
+                writer = cv2.VideoWriter(str(self.output_path), fourcc, self.fps, frame_size)
+                if writer.isOpened():
+                    self.writer = writer
                     self.is_initialized = True
-                    print(f"✓ VideoWriter inizializzato: {self.output_path}")
-                    print(f"  FPS: {self.fps}, Size: {frame_size}, Codec: {codec}")
-                    return  # Successo!
-                else:
-                    # Fallito, rilascia e prova prossimo
-                    if self.writer is not None:
-                        self.writer.release()
-                    
-            except Exception as e:
-                # Errore durante creazione fourcc o writer
+                    print(f"VideoWriter ready: {self.output_path}  "
+                          f"[codec={codec}, fps={self.fps}, size={frame_size}]")
+                    return
+                writer.release()
+            except Exception:
                 continue
-        
-        # Se arriviamo qui, nessun codec ha funzionato
+
         raise RuntimeError(
-            f"Impossibile aprire VideoWriter per {self.output_path}\n"
-            f"Codec provati: {codecs_to_try}\n"
-            f"Frame size: {frame_size}, FPS: {self.fps}"
+            f"Could not open VideoWriter for '{self.output_path}'. "
+            f"Tried codecs: {codecs_to_try}  frame_size={frame_size}  fps={self.fps}"
         )
-    
+
     def write_frame(self, frame: np.ndarray):
         """
-        Scrive un frame sul video.
-        
-        Args:
-            frame: Frame da scrivere (BGR)
+        Writes a BGR frame to the output video.
+        Initializes the writer automatically on the first call if frame_size was not
+        provided at construction time.
         """
         if frame is None:
             return
-        
-        # Inizializza writer se necessario
         if not self.is_initialized:
             h, w = frame.shape[:2]
             self._initialize_writer((w, h))
-        
-        # Scrivi frame
         self.writer.write(frame)
         self.frame_count += 1
-    
+
     def write(self, frame: np.ndarray):
-        """Alias per write_frame() - compatibilità con OpenCV VideoWriter."""
+        """Alias for write_frame() — matches the cv2.VideoWriter interface."""
         self.write_frame(frame)
-    
+
     def release(self):
-        """Rilascia il VideoWriter."""
+        """Flushes and closes the output file."""
         if self.writer is not None and self.is_initialized:
             self.writer.release()
-            print(f"✓ Video salvato: {self.output_path}")
-            print(f"  Frames scritti: {self.frame_count}")
+            print(f"Video saved: {self.output_path}  ({self.frame_count} frames)")
             self.is_initialized = False
-    
+
+    # Context manager support
     def __enter__(self):
-        """Context manager entry."""
         return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
+
+    def __exit__(self, *_):
         self.release()
-    
+
     def __del__(self):
-        """Destructor."""
         self.release()
 
 
-# ============================================================================
-# ALIAS PER COMPATIBILITÀ - USA DIRETTAMENTE VideoWriterManager
-# ============================================================================
+# Alias kept for backward compatibility
 VideoWriter = VideoWriterManager

@@ -1,5 +1,11 @@
 """
-Light Detector - Rilevamento fari posteriori tramite filtri HSV e blob detection.
+Light Detector
+
+Detects rear tail lights in a video frame using HSV colour filtering
+and contour-based blob detection.
+
+Outputs a list of LightCandidate objects, each describing one detected
+light blob.  Downstream, CandidateSelector picks the best left/right pair.
 """
 
 import cv2
@@ -11,237 +17,231 @@ from dataclasses import dataclass
 @dataclass
 class LightCandidate:
     """
-    Candidato per un faro rilevato.
-    
+    A single detected light blob.
+
     Attributes:
-        center: Centro (x, y) del blob
-        contour: Contorno del blob
-        area: Area del blob in pixel
-        circularity: Misura di circolarità (0-1)
-        bbox: Bounding box (x, y, w, h)
+        center      : (x, y) centroid in pixel coordinates
+        contour     : OpenCV contour array
+        area        : blob area in pixels²
+        circularity : compactness ratio in [0, 1]  (circle = 1)
+        bbox        : axis-aligned bounding box (x, y, w, h)
     """
-    center: Tuple[int, int]
-    contour: np.ndarray
-    area: float
+    center:      Tuple[int, int]
+    contour:     np.ndarray
+    area:        float
     circularity: float
-    bbox: Tuple[int, int, int, int]
+    bbox:        Tuple[int, int, int, int]
 
 
 class LightDetector:
     """
-    Detector per fari posteriori e anteriori usando filtri HSV.
+    Detects rear (and optionally front) vehicle lights using HSV masking.
+
+    Red lights wrap around the HSV hue axis (0-10° and 170-180°), so two
+    separate masks are combined.  White lights (reverse / plate illumination)
+    use a single low-saturation, high-value range.
+
+    All thresholds are loaded from detection_params.yaml so they can be
+    tuned without modifying this file.
     """
-    
+
     def __init__(self, config: Dict):
         """
-        Inizializza il detector.
-        
         Args:
-            config: Dizionario di configurazione (da detection_params.yaml)
+            config : dict loaded from detection_params.yaml
         """
         self.config = config
-        
-        # Range HSV
-        hsv_cfg = config.get('hsv_ranges', {})
-        red_cfg = hsv_cfg.get('red', {})
+
+        # --- HSV colour ranges ---
+        hsv_cfg  = config.get('hsv_ranges', {})
+        red_cfg  = hsv_cfg.get('red',   {})
         white_cfg = hsv_cfg.get('white', {})
-        
-        # Range rosso (split su HSV)
-        self.red_lower1 = np.array(red_cfg.get('lower1', [0, 100, 100]))
-        self.red_upper1 = np.array(red_cfg.get('upper1', [10, 255, 255]))
+
+        # Red is split across the hue wrap-around (0° and 180° are both red)
+        self.red_lower1 = np.array(red_cfg.get('lower1', [  0, 100, 100]))
+        self.red_upper1 = np.array(red_cfg.get('upper1', [ 10, 255, 255]))
         self.red_lower2 = np.array(red_cfg.get('lower2', [170, 100, 100]))
         self.red_upper2 = np.array(red_cfg.get('upper2', [180, 255, 255]))
-        
-        # Range bianco
-        self.white_lower = np.array(white_cfg.get('lower', [0, 0, 200]))
+
+        self.white_lower = np.array(white_cfg.get('lower', [  0,  0, 200]))
         self.white_upper = np.array(white_cfg.get('upper', [180, 30, 255]))
-        
-        # Parametri blob detection
-        blob_cfg = config.get('blob_detection', {})
-        self.min_area = blob_cfg.get('min_area', 50)
-        self.max_area = blob_cfg.get('max_area', 5000)
+
+        # --- Blob filtering ---
+        blob_cfg             = config.get('blob_detection', {})
+        self.min_area        = blob_cfg.get('min_area',        50)
+        self.max_area        = blob_cfg.get('max_area',      5000)
         self.min_circularity = blob_cfg.get('min_circularity', 0.4)
-        
-        # Parametri morfologia
-        morph_cfg = config.get('morphology', {})
-        kernel_size = morph_cfg.get('kernel_size', [5, 5])
-        self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, tuple(kernel_size))
-        self.open_iterations = morph_cfg.get('open_iterations', 1)
+
+        # --- Morphology kernel ---
+        morph_cfg             = config.get('morphology', {})
+        kernel_size           = morph_cfg.get('kernel_size', [5, 5])
+        self.kernel           = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                                          tuple(kernel_size))
+        self.open_iterations  = morph_cfg.get('open_iterations',  1)
         self.close_iterations = morph_cfg.get('close_iterations', 1)
-    
+
+    # ------------------------------------------------------------------
+    # Mask creation
+    # ------------------------------------------------------------------
+
     def detect_red_lights(self, frame: np.ndarray) -> np.ndarray:
         """
-        Crea maschera per luci rosse (fari posteriori).
-        
+        Build a binary mask for red pixels (rear tail lights).
+
+        Combines two HSV ranges to cover the hue wrap-around at 0°/180°.
+
         Args:
-            frame: Frame BGR
-            
+            frame : BGR image
+
         Returns:
-            Maschera binaria con le luci rosse
+            Binary mask (same H×W as frame)
         """
-        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        
-        # Il rosso in HSV è split: 0-10 e 170-180
+        hsv   = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         mask1 = cv2.inRange(hsv, self.red_lower1, self.red_upper1)
         mask2 = cv2.inRange(hsv, self.red_lower2, self.red_upper2)
-        
-        mask = cv2.bitwise_or(mask1, mask2)
-        
-        return mask
-    
+        return cv2.bitwise_or(mask1, mask2)
+
     def detect_white_lights(self, frame: np.ndarray) -> np.ndarray:
         """
-        Crea maschera per luci bianche (targa, freno).
-        
+        Build a binary mask for white pixels (plate lamp, reverse light).
+
         Args:
-            frame: Frame BGR
-            
+            frame : BGR image
+
         Returns:
-            Maschera binaria con le luci bianche
+            Binary mask (same H×W as frame)
         """
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.white_lower, self.white_upper)
-        
-        return mask
-    
+        return cv2.inRange(hsv, self.white_lower, self.white_upper)
+
     def apply_morphology(self, mask: np.ndarray) -> np.ndarray:
         """
-        Applica operazioni morfologiche per pulire la maschera.
-        
+        Clean a binary mask with morphological opening then closing.
+
+        Opening  : removes small isolated noise blobs.
+        Closing  : fills small holes inside detected regions.
+
         Args:
-            mask: Maschera binaria
-            
+            mask : binary mask
+
         Returns:
-            Maschera pulita
+            Cleaned binary mask
         """
-        # Opening: rimuove piccoli blob di rumore
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self.kernel, 
-                               iterations=self.open_iterations)
-        
-        # Closing: chiude piccoli buchi
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  self.kernel,
+                                iterations=self.open_iterations)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.kernel,
-                               iterations=self.close_iterations)
-        
+                                iterations=self.close_iterations)
         return mask
-    
+
+    # ------------------------------------------------------------------
+    # Candidate extraction
+    # ------------------------------------------------------------------
+
     def find_light_candidates(self, mask: np.ndarray) -> List[LightCandidate]:
         """
-        Trova candidati per i fari dalla maschera.
-        
+        Extract LightCandidate objects from a binary mask.
+
+        Filters by area and circularity; tail lights tend to be
+        roughly elliptical, so very elongated or jagged blobs are rejected.
+
         Args:
-            mask: Maschera binaria
-            
+            mask : cleaned binary mask
+
         Returns:
-            Lista di LightCandidate
+            List of LightCandidate (may be empty)
         """
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, 
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
                                        cv2.CHAIN_APPROX_SIMPLE)
-        
         candidates = []
-        
+
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            
-            # Filtra per area
             if not (self.min_area < area < self.max_area):
                 continue
-            
-            # Calcola circolarità
+
             perimeter = cv2.arcLength(cnt, True)
             if perimeter == 0:
                 continue
-            
-            circularity = 4 * np.pi * area / (perimeter * perimeter)
-            
-            # Filtra per circolarità (i fari tendono ad essere circolari/ellittici)
+
+            circularity = 4 * np.pi * area / (perimeter ** 2)
             if circularity < self.min_circularity:
                 continue
-            
-            # Calcola centro (momento)
+
             M = cv2.moments(cnt)
-            if M["m00"] == 0:
+            if M['m00'] == 0:
                 continue
-            
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-            
-            # Bounding box
-            bbox = cv2.boundingRect(cnt)
-            
+
+            cx = int(M['m10'] / M['m00'])
+            cy = int(M['m01'] / M['m00'])
+
             candidates.append(LightCandidate(
                 center=(cx, cy),
                 contour=cnt,
                 area=area,
                 circularity=circularity,
-                bbox=bbox
+                bbox=cv2.boundingRect(cnt)
             ))
-        
+
         return candidates
-    
-    def detect_tail_lights(self, frame: np.ndarray, 
-                          combine_masks: bool = True) -> Tuple[List[LightCandidate], np.ndarray]:
+
+    # ------------------------------------------------------------------
+    # Main detection entry point
+    # ------------------------------------------------------------------
+
+    def detect_tail_lights(self, frame: np.ndarray,
+                           combine_masks: bool = True
+                           ) -> Tuple[List[LightCandidate], np.ndarray]:
         """
-        Rileva i fari posteriori in un frame.
-        
+        Detect tail light candidates in a single frame.
+
         Args:
-            frame: Frame BGR
-            combine_masks: Se True, combina maschere rosso e bianco
-            
+            frame         : BGR image
+            combine_masks : if True, merges red and white masks before
+                            blob detection (catches plate lamp overlap)
+
         Returns:
-            Tuple (candidati, maschera_combinata)
+            (candidates, combined_mask)
         """
-        # Crea maschere
-        red_mask = self.detect_red_lights(frame)
+        red_mask   = self.detect_red_lights(frame)
         white_mask = self.detect_white_lights(frame)
-        
-        # Combina maschere
-        if combine_masks:
-            combined_mask = cv2.bitwise_or(red_mask, white_mask)
-        else:
-            combined_mask = red_mask
-        
-        # Applica morfologia
-        combined_mask = self.apply_morphology(combined_mask)
-        
-        # Trova candidati
-        candidates = self.find_light_candidates(combined_mask)
-        
-        return candidates, combined_mask
-    
-    def visualize_detection(self, frame: np.ndarray, candidates: List[LightCandidate],
-                           mask: Optional[np.ndarray] = None) -> np.ndarray:
+
+        combined = cv2.bitwise_or(red_mask, white_mask) if combine_masks else red_mask
+        combined = self.apply_morphology(combined)
+
+        return self.find_light_candidates(combined), combined
+
+    # ------------------------------------------------------------------
+    # Debug visualisation
+    # ------------------------------------------------------------------
+
+    def visualize_detection(self, frame: np.ndarray,
+                            candidates: List[LightCandidate],
+                            mask: Optional[np.ndarray] = None) -> np.ndarray:
         """
-        Visualizza i candidati rilevati sul frame.
-        
+        Draw detected candidates on a copy of the frame for debugging.
+
         Args:
-            frame: Frame originale
-            candidates: Lista di candidati rilevati
-            mask: Maschera opzionale da mostrare
-            
+            frame      : original BGR image
+            candidates : list of detected candidates
+            mask       : optional binary mask to append side-by-side
+
         Returns:
-            Frame con visualizzazione
+            Annotated frame (mask appended on the right if provided)
         """
-        vis_frame = frame.copy()
-        
-        for candidate in candidates:
-            # Disegna contorno
-            cv2.drawContours(vis_frame, [candidate.contour], -1, (0, 255, 0), 2)
-            
-            # Disegna centro
-            cv2.circle(vis_frame, candidate.center, 5, (0, 0, 255), -1)
-            
-            # Disegna bounding box
-            x, y, w, h = candidate.bbox
-            cv2.rectangle(vis_frame, (x, y), (x+w, y+h), (255, 0, 0), 1)
-            
-            # Aggiungi testo con info
-            text = f"A:{candidate.area:.0f} C:{candidate.circularity:.2f}"
-            cv2.putText(vis_frame, text, (candidate.center[0] + 10, candidate.center[1]),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
-        
-        # Mostra maschera se fornita
+        vis = frame.copy()
+
+        for c in candidates:
+            cv2.drawContours(vis, [c.contour], -1, (0, 255, 0), 2)
+            cv2.circle(vis, c.center, 5, (0, 0, 255), -1)
+
+            x, y, w, h = c.bbox
+            cv2.rectangle(vis, (x, y), (x + w, y + h), (255, 0, 0), 1)
+
+            label = f"A:{c.area:.0f} C:{c.circularity:.2f}"
+            cv2.putText(vis, label, (c.center[0] + 10, c.center[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
         if mask is not None:
-            mask_colored = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-            vis_frame = np.hstack([vis_frame, mask_colored])
-        
-        return vis_frame
+            vis = np.hstack([vis, cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)])
+
+        return vis

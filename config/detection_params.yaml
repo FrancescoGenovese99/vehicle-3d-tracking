@@ -1,86 +1,91 @@
-# Parametri per il rilevamento dei fari
+# Headlight and tail light detection parameters
 
-# Range HSV per rilevamento luci
+# HSV color ranges for light detection.
+# Red wraps around the hue wheel, so it needs two separate ranges.
 hsv_ranges:
-  # Fari posteriori rossi (HSV split su rosso: 0-10 e 170-180)
-  red:
-    lower1: [0, 100, 100]      # [H, S, V]
+  red:                              # Rear tail lights
+    lower1: [0, 100, 100]          # [H, S, V]
     upper1: [10, 255, 255]
-    lower2: [170, 100, 100]
+    lower2: [170, 100, 100]        # Red hue wraps at 180, hence the second range
     upper2: [180, 255, 255]
-  
-  # Luci bianche (targa, freno, retromarcia)
-  white:
+
+  white:                            # License plate, brake, reverse lights
     lower: [0, 0, 200]
     upper: [180, 30, 255]
-  
-  # Fari anteriori gialli/bianchi
-  yellow_white:
+
+  yellow_white:                     # Front headlights
     lower: [15, 50, 150]
     upper: [35, 255, 255]
 
-# Parametri blob detection
+
+# Blob detector parameters (passed to cv2.SimpleBlobDetector)
 blob_detection:
-  min_area: 50               # Area minima blob in pixel
-  max_area: 5000             # Area massima blob in pixel
-  min_circularity: 0.1       # Circolarità minima (0-1, cerchio perfetto = 1)
-  min_convexity: 0.5         # Convessità minima
-  min_inertia_ratio: 0.15     # Rapporto inerzia minimo
+  min_area: 50            # Minimum blob area in pixels
+  max_area: 5000          # Maximum blob area in pixels
+  min_circularity: 0.1    # 0 = any shape, 1 = perfect circle
+  min_convexity: 0.5
+  min_inertia_ratio: 0.15  # Low = elongated, high = circular
 
-# Filtri morfologici
+
+# Morphological operations applied to the HSV mask before blob detection
 morphology:
-  kernel_size: [5, 5]        # Dimensione kernel per erosione/dilatazione
-  open_iterations: 1         # Iterazioni morphologyEx OPEN
-  close_iterations: 1        # Iterazioni morphologyEx CLOSE
+  kernel_size: [5, 5]
+  open_iterations: 1    # MORPH_OPEN  — removes small noise
+  close_iterations: 1   # MORPH_CLOSE — fills small holes inside blobs
 
-# Selezione coppia fari
+
+# Heuristics for pairing left/right tail lights
 tail_lights_selection:
-  min_horizontal_distance: 50      # Distanza minima tra fari (pixel)
-  max_horizontal_distance_ratio: 0.8  # Max distanza / larghezza frame
-  max_vertical_offset: 60          # Disallineamento verticale massimo (pixel)
-  min_area_similarity: 0.3         # Rapporto area minimo tra i due fari
-  min_pair_score: 0.25              # Score minimo per coppia valida
+  min_horizontal_distance: 50         # Minimum pixel distance between the two lights
+  max_horizontal_distance_ratio: 0.8  # Maximum distance relative to frame width
+  max_vertical_offset: 60             # Max allowed vertical misalignment in pixels
+  min_area_similarity: 0.3            # Min area ratio between the two blobs (0–1)
+  min_pair_score: 0.25                # Pairs below this score are discarded
 
-# Parametri tracking
+
+# Tracker settings — used between detections to reduce per-frame cost
 tracking:
-  tracker_type: "CSRT"       # Opzioni: CSRT, KCF, MOSSE
-  bbox_padding: 20           # Padding attorno al punto per bbox tracker
-  max_frames_lost: 10        # Frames max senza detection prima di re-detect
-  
-# Re-detection
-redetection:
-  confidence_threshold: 0.6  # Threshold per riattivare detection
-  enable_kalman_prediction: true  # Usa Kalman per predire posizione
-  search_region_scale: 2.5  # Scala regione di ricerca attorno al tracker
+  # Options: CSRT (accurate, slow), KCF (fast, less accurate), MOSSE (fastest)
+  tracker_type: "CSRT"
+  bbox_padding: 20       # Pixels added around the detected point to build the tracker bbox
+  max_frames_lost: 10    # Frames without a detection before forcing a re-detection
 
-# Visualizzazione
+
+# Re-detection strategy when the tracker loses the target
+redetection:
+  confidence_threshold: 0.6    # Tracker confidence below this triggers re-detection
+  enable_kalman_prediction: true
+  search_region_scale: 2.5     # Search area = tracker bbox × this scale factor
+
+
+# Drawing options (all colors in BGR)
 visualization:
-  draw_detections: true      # Disegna punti rilevati
-  draw_tracking: true        # Disegna tracking
-  draw_bbox_3d: true         # Disegna bounding box 3D
-  point_color: [0, 255, 0]   # Verde per punti (BGR)
-  bbox_color: [255, 0, 0]    # Blu per bbox (BGR)
+  draw_detections: true
+  draw_tracking: true
+  draw_bbox_3d: true
+  point_color: [0, 255, 0]    # Green
+  bbox_color: [255, 0, 0]     # Blue
   line_thickness: 2
 
-# Debug
+
 debug:
-  save_masks: false          # Salva maschere HSV
-  save_detection_frames: false  # Salva frames con detection
-  verbose: true              # Output verbose
+  save_masks: false             # Dump HSV masks to disk
+  save_detection_frames: false  # Dump frames with drawn detections to disk
+  verbose: true
 
 
-# Detection targa (Task 1)
+# License plate detection
 license_plate_detection:
   edge_detection:
     canny_low: 50
     canny_high: 150
-    blur_kernel: 5
-  
+    blur_kernel: 5    # Gaussian blur kernel size before Canny
+
   contour_filter:
-    min_area: 1000      # Area minima contorno (pixel^2)
-    max_area: 50000     # Area massima
-    aspect_ratio_min: 2.5   # Targa EU ~4.7:1
+    min_area: 1000            # px²
+    max_area: 50000           # px²
+    aspect_ratio_min: 2.5     # EU plate is ~4.7:1
     aspect_ratio_max: 6.0
-    min_solidity: 0.7   # Rapporto area/convex_hull
-  
-  epsilon_factor: 0.02  # Per approssimazione poligonale
+    min_solidity: 0.7         # contour_area / convex_hull_area
+
+  epsilon_factor: 0.02        # Polygon approximation tolerance (fraction of arc length)

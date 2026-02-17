@@ -1,61 +1,75 @@
-# Configurazione camera e calibrazione
+# Camera configuration and calibration parameters
 
 camera:
-  # Path al file di calibrazione (.npz contiene matrice intrinseca e coefficienti distorsione)
+  # Path to the .npz calibration file (contains camera matrix and distortion coefficients).
+  # If this file is present, the intrinsics/distortion blocks below are ignored.
   calibration_file: "data/calibration/camera1.npz"
-  
-  # Parametri intrinseci (opzionale, se non usi .npz)
-  # Matrice intrinseca K = [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
+
+  # Manual intrinsic parameters — only used when no calibration file is provided.
+  # Pinhole camera model: K = [[fx, 0, cx], [0, fy, cy], [0, 0, 1]]
   intrinsics:
-    fx: 800.0              # Lunghezza focale X (pixel)
-    fy: 800.0              # Lunghezza focale Y (pixel)
-    cx: 640.0              # Centro ottico X (pixel)
-    cy: 360.0              # Centro ottico Y (pixel)
-  
-  # Coefficienti di distorsione [k1, k2, p1, p2, k3]
+    fx: 800.0   # Focal length X (pixels)
+    fy: 800.0   # Focal length Y (pixels)
+    cx: 640.0   # Principal point X — usually image_width  / 2
+    cy: 360.0   # Principal point Y — usually image_height / 2
+
+  # Distortion coefficients, OpenCV convention: [k1, k2, p1, p2, k3]
+  # k1/k2/k3 = radial, p1/p2 = tangential. Set all to 0 for ideal pinhole.
   distortion:
     k1: 0.0
     k2: 0.0
     p1: 0.0
     p2: 0.0
     k3: 0.0
-  
-  # Risoluzione video
+
+  # Must match the resolution used during calibration
   resolution:
     width: 1280
     height: 720
-  
-  # Frame rate
+
   fps: 30
 
-# Calibrazione scacchiera (per ricalcolare parametri)
+
+# Chessboard calibration — run the calibration script to regenerate camera1.npz.
+# Collect at least 20 images from varied angles before running it.
 calibration:
   pattern:
-    type: "chessboard"       # Tipo pattern: chessboard, circles, asymmetric_circles
-    size: [9, 6]             # Numero angoli interni [colonne, righe]
-    square_size: 0.025       # Dimensione quadrato in metri (2.5 cm)
-  
+    # Supported: "chessboard", "circles", "asymmetric_circles"
+    type: "chessboard"
+    # Number of inner corners [cols, rows].
+    # For a standard 8x8 chess board the full inner grid is 7x7.
+    # Using 7x3 makes detection reliable even when the board is partially
+    # visible or held at a steep angle (only a horizontal strip is needed).
+    size: [7, 3]
+    square_size: 0.025   # Square side length in meters (2.5 cm)
+
   images_path: "data/calibration/images/"
-  output_file: "data/calibration/camera1.npy"
-  
-  # Criteri di ottimizzazione
+  output_file: "data/calibration/camera1.npz"  # Should match camera.calibration_file
+
+  # Termination criteria for cv2.cornerSubPix
   criteria:
     max_iterations: 30
     epsilon: 0.001
 
-# PnP solver
+
+# PnP solver settings (used to estimate camera pose from 2D-3D correspondences)
 pnp:
-  method: "ITERATIVE"        # Opzioni: ITERATIVE, P3P, EPNP, DLS, UPNP
-  use_extrinsic_guess: false # Usa posa precedente come guess
-  refine_iterations: 10      # Iterazioni refinement
-  
-  # RANSAC (se abilitato)
+  # Options: ITERATIVE, P3P, EPNP, DLS, UPNP
+  method: "ITERATIVE"
+
+  # Warm-start the solver with the previous frame's pose — helps in video sequences
+  # but can cause drift if a frame is lost
+  use_extrinsic_guess: false
+
+  refine_iterations: 10   # LM refinement steps after the initial estimate
+
+  # Enable RANSAC if point matches may contain outliers
   ransac:
     enabled: false
-    reprojection_error: 8.0  # Errore max in pixel
-    confidence: 0.99         # Confidenza RANSAC
+    reprojection_error: 8.0   # Inlier threshold in pixels
+    confidence: 0.99
 
-# Output
+
 output:
-  save_camera_matrix: true   # Salva matrice camera nei risultati
-  save_distortion: true      # Salva coefficienti distorsione
+  save_camera_matrix: true
+  save_distortion: true

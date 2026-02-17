@@ -1,5 +1,5 @@
 """
-Calibration module - Calibrazione camera e caricamento parametri.
+Calibration module - Camera calibration and parameters loading
 """
 
 from .load_calibration import load_camera_calibration, CameraParameters

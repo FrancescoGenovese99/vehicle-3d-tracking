@@ -1,12 +1,12 @@
-# ============================================================
-# Vehicle 3D Model - Toyota Aygo X 2024
-# ============================================================
-# Sistema di riferimento:
-#   Origine: centro asse ruote posteriori a livello suolo
-#   X: avanti (positivo)
-#   Y: sinistra (positivo)
-#   Z: su (positivo)
-# ============================================================
+# Vehicle 3D model — Toyota Aygo X 2024
+#
+# Reference frame:
+#   Origin : center of rear axle at ground level
+#   X      : forward (positive)
+#   Y      : left    (positive)
+#   Z      : up      (positive)
+#
+# All coordinates in meters, right-handed system.
 
 vehicle:
 
@@ -14,131 +14,92 @@ vehicle:
   model: "Aygo X"
   year: 2024
 
-  # ----------------------------------------------------------
-  # Dimensioni globali (metri)
-  # ----------------------------------------------------------
+  # Overall dimensions
   dimensions:
     length: 3.70
     width: 1.74
     height: 1.525
     wheelbase: 2.43
     front_overhang: 0.806
-    rear_overhang: 0.54
+    rear_overhang: 0.54      # Rear of the car sits at X = -0.54
     ground_clearance: 0.132
 
-  # ----------------------------------------------------------
-  # Reference frame
-  # ----------------------------------------------------------
-  reference_frame:
-    origin: "centro asse ruote posteriori a livello suolo"
-    axes: "X avanti, Y sinistra, Z su"
-    notes:
-      - "Origine a Z = 0 (suolo)"
-      - "Coordinate assolute, non relative"
-
-  # ----------------------------------------------------------
-  # FARI POSTERIORI
-  # Ogni faro è modellato come FEATURE VERTICALE (2 punti 3D)
-  # Misure ottenute da immagini reali (no CAD)
-  # ----------------------------------------------------------
+  # -------------------------------------------------------
+  # Tail lights
+  # Modeled as vertical segments (2 anchor points per side).
+  # Coordinates estimated from real images, not CAD data.
+  # -------------------------------------------------------
   tail_lights:
 
-    description: "Fari posteriori LED verticali"
-    distance_between_outer_points: 1.42   # distanza reale tra i punti esterni
+    description: "Vertical LED tail lights"
+    distance_between_outer_points: 1.42   # Real-world distance between outer points (m)
 
     left:
-      outer:  [-0.27,  0.70, 1.05]  # Punto più esterno SX
-      top:    [-0.00,  0.50, 1.30]  # Punto più alto SX
-      bottom: [-0.33,  0.50, 0.82]  # Punto più basso SX 
+      outer:  [-0.27,  0.70, 1.05]   # Outermost point, left side
+      top:    [-0.00,  0.50, 1.30]   # Top of the L-shape (more forward)
+      bottom: [-0.33,  0.50, 0.82]   # Bottom of the L-shape
+
     right:
-      outer:  [-0.27, -0.70, 1.05]  # Punto più esterno DX
-      top:    [-0.00, -0.50, 1.30]  # Punto più alto DX
-      bottom: [-0.33, -0.50, 0.82]  # Punto più basso DX
+      outer:  [-0.27, -0.70, 1.05]   # Outermost point, right side
+      top:    [-0.00, -0.50, 1.30]
+      bottom: [-0.33, -0.50, 0.82]
 
-
-
-
-
-
-
-   # ----------------------------------------------------------
-  # Punti di riferimento per PnP (metri)
-  # X: avanti, Y: sinistra, Z: su
-  # Il retro dell'auto è a X = -0.54 (rear_overhang)
-  # ----------------------------------------------------------
+  # -------------------------------------------------------
+  # 3D reference points for PnP solver
+  # These match the tail light anchor points above.
+  # -------------------------------------------------------
   pnp_points_3d:
-    light_l_outer:  [-0.27,  0.70, 1.05]   # rear edge, outer
-    light_r_outer:  [-0.27, -0.70, 1.05]   # rear edge, outer
-    light_l_top:    [-0.00,  0.50, 1.30]   # top of L-shape (more forward) 
-    light_r_top:    [-0.00, -0.50, 1.30]   # top of L-shape (more forward) 
-    light_l_bottom: [-0.33,  0.50, 0.82]   # rear edge, bottom
-    light_r_bottom: [-0.33, -0.50, 0.82]   # rear edge, bottom
+    light_l_outer:  [-0.27,  0.70, 1.05]
+    light_r_outer:  [-0.27, -0.70, 1.05]
+    light_l_top:    [-0.00,  0.50, 1.30]
+    light_r_top:    [-0.00, -0.50, 1.30]
+    light_l_bottom: [-0.33,  0.50, 0.82]
+    light_r_bottom: [-0.33, -0.50, 0.82]
 
-
-
-  # ----------------------------------------------------------
-  # TARGA POSTERIORE
-  # ----------------------------------------------------------
-
-  plate_line_3d:
-    y_start: 0.26   # Estremità sinistra targa
-    y_end: -0.26    # Estremità destra targa
-    z: 0.40         # Altezza da terra bordo inferiore
-    x: -0.55        # Posizione X
-
-
-
+  # -------------------------------------------------------
+  # License plate (rear)
+  # -------------------------------------------------------
   license_plate:
-    center: [ -0.55, 0.0, 0.40 ]
-
+    center: [-0.55, 0.0, 0.40]
     width: 0.52
     height: 0.11
-    center_ground_offset: 0.45      # Altezza del centro targa da terra
+    center_ground_offset: 0.45   # Height of plate center from ground
 
     corners:
-      bottom_left:  [-0.55,  0.26, 0.40] 
+      bottom_left:  [-0.55,  0.26, 0.40]
       bottom_right: [-0.55, -0.26, 0.40]
 
-    mounting: "centro portellone posteriore"
+    mounting: "rear hatch, center"
 
-  # ----------------------------------------------------------
-  # BOUNDING BOX 3D DEL VEICOLO
-  # Origine: centro asse ruote posteriori
-  # X: -0.54m (dietro) → +3.16m (avanti)
-  # Y: ±0.87m (larghezza/2)
-  # Z: 0 (suolo) → 1.525m (tetto)
-  # ----------------------------------------------------------
+  # Plate bottom edge as a horizontal 3D line segment 
+  plate_line_3d:
+    y_start:  0.26    # Left end of plate
+    y_end:   -0.26    # Right end of plate
+    z:        0.40    # Height of bottom edge from ground
+    x:       -0.55
+
+  # -------------------------------------------------------
+  # 3D bounding box
+  # X: -0.54 (rear bumper) → +3.16 (front bumper)
+  # Y: ±0.87 (half-width)
+  # Z:  0.00 (ground)      →  1.525 (roof)
+  # -------------------------------------------------------
   bbox_vertices:
 
-    # Base (suolo)
-    bottom_rear_right:  [ -0.54, -0.87, 0.0 ]    # Paraurti posteriore destro
-    bottom_rear_left:   [ -0.54,  0.87, 0.0 ]    # Paraurti posteriore sinistro
-    bottom_front_left:  [  3.16,  0.87, 0.0 ]    # Paraurti anteriore sinistro
-    bottom_front_right: [  3.16, -0.87, 0.0 ]    # Paraurti anteriore destro
+    # Bottom face (ground level)
+    bottom_rear_right:  [-0.54, -0.87, 0.0]
+    bottom_rear_left:   [-0.54,  0.87, 0.0]
+    bottom_front_left:  [ 3.16,  0.87, 0.0]
+    bottom_front_right: [ 3.16, -0.87, 0.0]
 
-    # Top (tetto)
-    top_rear_right:     [ -0.54, -0.87, 1.525 ]  # Posteriore destro alto
-    top_rear_left:      [ -0.54,  0.87, 1.525 ]  # Posteriore sinistro alto
-    top_front_left:     [  3.16,  0.87, 1.525 ]  # Anteriore sinistro alto
-    top_front_right:    [  3.16, -0.87, 1.525 ]  # Anteriore destro alto
+    # Top face (roof level)
+    top_rear_right:     [-0.54, -0.87, 1.525]
+    top_rear_left:      [-0.54,  0.87, 1.525]
+    top_front_left:     [ 3.16,  0.87, 1.525]
+    top_front_right:    [ 3.16, -0.87, 1.525]
 
-  # ----------------------------------------------------------
-  # Punti di riferimento aggiuntivi
-  # ----------------------------------------------------------
+  # Additional reference points
   additional_reference_points:
-
-    rear_wheel_center: [ 0.0, 0.0, 0.0 ]
-
-    geometric_center:  [ 1.85, 0.0, 0.76 ]
-
-    center_of_gravity: [ 1.75, 0.0, 0.50 ]
-
-# ============================================================
-# NOTE FINALI
-# ============================================================
-# - Tutte le coordinate sono in METRI
-# - Sistema destrorso
-# - Fari modellati come SEGMENTI, non punti
-# - Nessuna assunzione CAD
-# - Modello adatto a stima yaw da foreshortening
-# ============================================================
+    rear_wheel_center: [0.0,  0.0, 0.0]    # Origin of the reference frame
+    geometric_center:  [1.85, 0.0, 0.76]
+    center_of_gravity: [1.75, 0.0, 0.50]   # Estimated

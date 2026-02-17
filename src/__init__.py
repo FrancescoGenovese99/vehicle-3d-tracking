@@ -1,6 +1,6 @@
 """
 Vehicle 3D Tracking Package
-Moduli per rilevamento, tracking e stima posa 3D di veicoli da fari posteriori.
+Scripts for detection, tracking and 3D pose estimation of vehicles via tail lights
 """
 
 __version__ = "1.0.0"
